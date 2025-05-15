@@ -1,0 +1,53 @@
+version: "3.8"
+
+services:
+  vault1:
+    image: hashicorp/vault:1.15
+    container_name: vault1
+    environment:
+      VAULT_API_ADDR: "http://vault1:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault1-data:/vault/file
+      - ./docker/vault-config.hcl:/tmp/vault-config.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - vault1-net
+    entrypoint: >
+      /bin/sh -c "
+      cp /tmp/vault-config.hcl /vault/file/config.hcl &&
+      vault server -config=/vault/file/config.hcl
+      "
+  vault2:
+    image: hashicorp/vault:1.15
+    container_name: vault2
+    environment:
+      VAULT_API_ADDR: "http://vault2:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    ports:
+      - "8300:8200"
+    volumes:
+      - vault2-data:/vault/file
+      - ./docker/vault-config.hcl:/tmp/vault-config.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - vault2-net
+    entrypoint: >
+      /bin/sh -c "
+      cp /tmp/vault-config.hcl /vault/file/config.hcl &&
+      vault server -config=/vault/file/config.hcl
+      "
+
+volumes:
+  vault1-data:
+  vault2-data:
+
+networks:
+  vault1-net:
+    driver: bridge
+  vault2-net:
+    driver: bridge
