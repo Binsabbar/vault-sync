@@ -1,6 +1,18 @@
 version: "3.8"
 
 services:
+  app:
+    image: vault-sync
+    build:
+      context: .
+      dockerfile: Dockerfile-local
+    command: ["sync", "-c", "/tmp/sample-config.yaml"]
+    volumes:
+      - ./sample-config.yaml:/tmp/sample-config.yaml:ro
+    depends_on:
+      - vault1
+      - vault2
+
   vault1:
     image: hashicorp/vault:1.15
     container_name: vault1
