@@ -39,3 +39,14 @@ docker compose exec vault1 vault kv put production/infra/grafana SECRET=GRAFANA 
 VAULT_INIT_OUTPUT=$(docker compose exec vault2 sh -c "vault operator init -key-shares=1 -key-threshold=1 -format=yaml")
 VAULT_UNSEAL_KEY=$(echo "$VAULT_INIT_OUTPUT" | grep 'unseal_keys_b64:' -A 1 | tail -n 1 | awk '{print $2}')
 docker compose exec vault2 vault operator unseal $VAULT_UNSEAL_KEY
+
+# Login to vault2
+docker compose exec vault2 vault login $VAULT_ROOT_TOKEN
+docker compose exec vault2 vault auth enable userpass
+docker compose exec vault2 sh -c "echo '
+path \"*\" {
+  capabilities = [\"create\", \"read\", \"update\", \"delete\", \"list\", \"sudo\"]
+}
+' > /vault/file/admin-policy.hcl"
+docker compose exec vault2 vault policy write admin /vault/file/admin-policy.hcl
+docker compose exec vault2 vault write auth/userpass/users/admin password=admin policies=admin
