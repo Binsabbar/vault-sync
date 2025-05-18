@@ -1,0 +1,32 @@
+# GoReleaser starter configuration — customize as needed
+project_name: vault-sync
+
+builds:
+  - main: ./main.go
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: ${{ github.repository_owner }}
+    name: ${{ github.event.repository.name }}
+  prerelease: auto
+  draft: false
