@@ -1,7 +1,7 @@
 # id is the unique identifier for sync service
 id: test
 # sync interval is the interval at which the cluster will sync secrets from the main cluster
-interval: 5s
+interval: 5
 
 postgres:
   # address is the address of the PostgreSQL database
