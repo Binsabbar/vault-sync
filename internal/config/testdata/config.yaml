@@ -5,7 +5,8 @@ interval: 5
 
 postgres:
   # address is the address of the PostgreSQL database
-  address: localhost:5432
+  address: localhost
+  port: 5432
   # username is the username used to connect to the PostgreSQL database
   username: postgres
   # password is the password used to connect to the PostgreSQL database
