@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"path/filepath"
 	"testing"
 
@@ -8,13 +9,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type configTestTable struct {
+	name        string
+	setFields   configFields
+	wantErr     bool
+	errContains string
+}
+
+type configFields map[string]interface{}
+
+var validAppConfig = configFields{
+	"id":                                 "test",
+	"interval":                           5,
+	"postgres.address":                   "localhost",
+	"postgres.port":                      5432,
+	"postgres.username":                  "u",
+	"postgres.password":                  "p",
+	"postgres.db_name":                   "d",
+	"postgres.max_connection":            "10",
+	"vault.main_cluster.address":         "a",
+	"vault.main_cluster.app_role":        "r",
+	"vault.main_cluster.app_secret":      "s",
+	"vault.main_cluster.tls_skip_verify": true,
+	"vault.replica_clusters":             []configFields{validVaultReplicaClusterConfig},
+}
+
+var validVaultReplicaClusterConfig = configFields{
+	"name":            "r2",
+	"address":         "a",
+	"app_role":        "r",
+	"app_secret":      "s",
+	"tls_skip_verify": "true",
+	"tls_cert_file":   "",
+}
+
+func deleteFromMap(m configFields, keys ...string) configFields {
+	clonedMap := maps.Clone(m)
+	for _, argument := range keys {
+		delete(clonedMap, argument)
+	}
+
+	return clonedMap
+}
+
+func updateAndReturnMap(m configFields, key string, value interface{}) configFields {
+	clonedMap := maps.Clone(m)
+	clonedMap[key] = value
+	return clonedMap
+}
+
 func TestConfigLoadFromYAML(t *testing.T) {
-	// Set viper as the global instance for NewConfig
+	viper.Reset()
 	viper.SetConfigFile(filepath.Join("testdata", "config.yaml"))
 	viper.SetConfigType("yaml")
-	require.NoError(t, viper.ReadInConfig())
+	viper.ReadInConfig()
 
 	cfg, err := NewConfig()
+
 	require.NoError(t, err)
 
 	require.Equal(t, "test", cfg.ID)
@@ -51,7 +102,7 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.Equal(t, "my_app_secret_replica_3", cfg.Vault.ReplicaClusters[1].AppSecret)
 }
 
-func TestConfigRequiredFields(t *testing.T) {
+func TestConfigurationValidation(t *testing.T) {
 	t.Run("returns config without error when config is valid", func(t *testing.T) {
 		viper.Reset()
 		viper.SetConfigFile(filepath.Join("testdata", "config.yaml"))
@@ -72,159 +123,116 @@ func TestConfigRequiredFields(t *testing.T) {
 		require.Contains(t, err.Error(), "validation error")
 	})
 
-	t.Run("Return error if only some required fields set", func(t *testing.T) {
-		tests := []struct {
-			name        string
-			setFields   map[string]interface{}
-			wantErr     bool
-			errContains string
-		}{
+	t.Run("It fails on all required field if any is missing", func(t *testing.T) {
+		tests := []configTestTable{
 			{
 				name:        "missing id",
-				setFields:   map[string]interface{}{},
+				setFields:   deleteFromMap(validAppConfig, "id"),
 				wantErr:     true,
-				errContains: "Config.ID",
+				errContains: "[Config.ID]",
 			},
 			{
 				name:        "missing interval",
-				setFields:   map[string]interface{}{"id": "test"},
+				setFields:   deleteFromMap(validAppConfig, "interval"),
 				wantErr:     true,
-				errContains: "Config.Interval",
+				errContains: "[Config.Interval]",
 			},
 			{
 				name:        "interval not int",
-				setFields:   map[string]interface{}{"id": "test", "interval": "notanint"},
+				setFields:   updateAndReturnMap(validAppConfig, "interval", "a"),
 				wantErr:     true,
 				errContains: "cannot parse 'interval' as int",
 			},
 			{
 				name:        "missing postgres.address",
-				setFields:   map[string]interface{}{"id": "test", "interval": 5},
+				setFields:   deleteFromMap(validAppConfig, "postgres.address"),
 				wantErr:     true,
-				errContains: "Config.Postgres.Address",
+				errContains: "[Config.Postgres.Address]",
+			},
+			{
+				name:        "missing postgres.port",
+				setFields:   deleteFromMap(validAppConfig, "postgres.port"),
+				wantErr:     true,
+				errContains: "[Config.Postgres.Port]",
 			},
 			{
 				name:        "missing postgres.username",
-				setFields:   map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a"},
+				setFields:   deleteFromMap(validAppConfig, "postgres.username"),
 				wantErr:     true,
-				errContains: "Config.Postgres.Username",
+				errContains: "[Config.Postgres.Username]",
 			},
 			{
 				name:        "missing postgres.password",
-				setFields:   map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u"},
+				setFields:   deleteFromMap(validAppConfig, "postgres.password"),
 				wantErr:     true,
-				errContains: "Config.Postgres.Password",
+				errContains: "[Config.Postgres.Password]",
 			},
 			{
 				name:        "missing postgres.db_name",
-				setFields:   map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p"},
+				setFields:   deleteFromMap(validAppConfig, "postgres.db_name"),
 				wantErr:     true,
-				errContains: "Config.Postgres.DBName",
+				errContains: "[Config.Postgres.DBName]",
 			},
 			{
 				name:        "missing vault.main_cluster.address",
-				setFields:   map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d"},
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.address"),
 				wantErr:     true,
-				errContains: "Config.Vault.MainCluster.Address",
+				errContains: "[Config.Vault.MainCluster.Address]",
 			},
 			{
-				name: "missing vault.main_cluster.app_role",
-				setFields: map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a"},
+				name:        "missing vault.main_cluster.app_role",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_role"),
 				wantErr:     true,
-				errContains: "Config.Vault.MainCluster.AppRole",
+				errContains: "[Config.Vault.MainCluster.AppRole]",
 			},
 			{
-				name: "missing vault.main_cluster.app_secret",
-				setFields: map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r"},
+				name:        "missing vault.main_cluster.app_secret",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_secret"),
 				wantErr:     true,
-				errContains: "Config.Vault.MainCluster.AppSecret",
+				errContains: "[Config.Vault.MainCluster.AppSecret]",
 			},
 			{
-				name: "missing vault.main_cluster.tls_skip_verify",
-				setFields: map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s"},
+				name:        "missing vault.main_cluster.tls_skip_verify",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.tls_skip_verify"),
 				wantErr:     true,
-				errContains: "Config.Vault.MainCluster.TLSSkipVerify",
+				errContains: "[Config.Vault.MainCluster.TLSSkipVerify]",
 			},
 			{
-				name: "replica_clusters must not be empty",
-				setFields: map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-					"vault.replica_clusters": []interface{}{}},
+				name:        "replica_clusters must not be empty",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", []configFields{}),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters",
+				errContains: "[Config.Vault.ReplicaClusters]",
 			},
 			{
-				name: "missing vault.replicat_cluster.name",
-				setFields: map[string]interface{}{
-					"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-					"vault.replica_clusters": []map[string]interface{}{{}},
-				},
+				name:        "missing vault.replicat_cluster.name",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "name")),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters[0].Name",
+				errContains: "[Config.Vault.ReplicaClusters[0].Name]",
 			},
 			{
-				name: "missing vault.replicat_cluster.address	",
-				setFields: map[string]interface{}{
-					"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-					"vault.replica_clusters": []map[string]interface{}{{"name": "r2"}},
-				},
+				name:        "missing vault.replicat_cluster.address	",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "address")),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters[0].Address",
+				errContains: "[Config.Vault.ReplicaClusters[0].Address]",
 			},
 			{
-				name: "missing vault.replicat_cluster.app_role",
-				setFields: map[string]interface{}{
-					"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-					"vault.replica_clusters": []map[string]interface{}{{"name": "r2", "address": "a"}},
-				},
+				name:        "missing vault.replicat_cluster.app_role",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role")),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters[0].AppRole",
+				errContains: "[Config.Vault.ReplicaClusters[0].AppRole]",
 			},
 			{
-				name: "missing vault.replicat_cluster.app_secret",
-				setFields: map[string]interface{}{
-					"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-					"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-					"vault.replica_clusters": []map[string]interface{}{{"name": "r2", "address": "a", "app_role": "r"}},
-				},
+				name:        "missing vault.replicat_cluster.app_secret",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_secret")),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters[0].AppSecret",
+				errContains: "[Config.Vault.ReplicaClusters[0].AppSecret]",
 			},
 			{
 				name:        "missing vault.replicat_cluster.tls_skip_verify",
-				setFields:   DeleteFromMap(validConfig, "vault.replica_cluster[0].tls_skip_verify"),
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "tls_skip_verify")),
 				wantErr:     true,
-				errContains: "Config.Vault.ReplicaClusters[0].TLSSkipVerify",
+				errContains: "[Config.Vault.ReplicaClusters[0].TLSSkipVerify]",
 			},
-			{
-				name:      "all required fields set",
-				setFields: validConfig,
-				wantErr:   false,
-			},
-			// {
-			// 	name: "missing vault.replicat_cluster.tls_cert_file when tls_skip_verify is false",
-			// 	setFields: map[string]interface{}{
-			// 		"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-			// 		"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r", "vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": true,
-			// 		"vault.replica_clusters": []map[string]interface{}{{"name": "r2", "address": "a", "app_role": "r", "app_secret": "s", "tls_skip_verify": false}},
-			// 	},
-			// 	wantErr:     true,
-			// 	errContains: "Config.Vault.ReplicaClusters[0].TLSCertFile",
-			// },
-			// {
-			// 	name: "missing vault.main_cluster.tls_cert_file when tls_skip_verify is false",
-			// 	setFields: map[string]interface{}{"id": "test", "interval": 5, "postgres.address": "a", "postgres.username": "u", "postgres.password": "p", "postgres.db_name": "d",
-			// 		"vault.main_cluster.address": "a", "vault.main_cluster.app_role": "r",
-			// 		"vault.main_cluster.app_secret": "s", "vault.main_cluster.tls_skip_verify": false},
-			// 	wantErr:     true,
-			// 	errContains: "Config.Vault.MainCluster.TLSCertFile",
-			// },
 		}
 
 		for _, tt := range tests {
@@ -233,35 +241,12 @@ func TestConfigRequiredFields(t *testing.T) {
 				for k, v := range tt.setFields {
 					viper.Set(k, v)
 				}
+
 				_, err := NewConfig()
-				if tt.wantErr {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), tt.errContains)
-				} else {
-					require.NoError(t, err)
-				}
+
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errContains)
 			})
 		}
 	})
-}
-
-var validConfig = map[string]interface{}{
-	"id":                                 "test",
-	"interval":                           5,
-	"postgres.address":                   "a",
-	"postgres.username":                  "u",
-	"postgres.password":                  "p",
-	"postgres.db_name":                   "d",
-	"vault.main_cluster.address":         "a",
-	"vault.main_cluster.app_role":        "r",
-	"vault.main_cluster.app_secret":      "s",
-	"vault.main_cluster.tls_skip_verify": true,
-	"vault.replica_clusters": []map[string]interface{}{
-		{"name": "r2", "address": "a", "app_role": "r", "app_secret": "s", "tls_skip_verify": true},
-	},
-}
-
-func DeleteFromMap(m map[string]interface{}, key string) map[string]interface{} {
-	delete(m, key)
-	return m
 }
