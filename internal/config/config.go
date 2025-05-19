@@ -16,7 +16,8 @@ type Config struct {
 }
 
 type Postgres struct {
-	Address        string `mapstructure:"address" validate:"required"`
+	Address        string `mapstructure:"address" validate:"required,hostname|ip"`
+	Port           int    `mapstructure:"port" validate:"required,gt=0,lt=65536"`
 	Username       string `mapstructure:"username" validate:"required"`
 	Password       string `mapstructure:"password" validate:"required"`
 	DBName         string `mapstructure:"db_name" validate:"required"`
