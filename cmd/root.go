@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"os"
+	"strings"
 	"vault-sync/cmd/sync"
 
 	"github.com/spf13/cobra"
@@ -39,7 +40,12 @@ func init() {
 	viper.SetConfigName(cfgFile)
 	viper.SetConfigType("yaml")
 	viper.SetEnvPrefix("vault_sync")
+	viper.AddConfigPath(".")                 // For running from project root
+	viper.AddConfigPath("/etc/vault-sync/")  // For production
+	viper.AddConfigPath("$HOME/.vault-sync") // For user-specific config
+
 	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	RootCmd.AddCommand(sync.SyncCmd)
 }
