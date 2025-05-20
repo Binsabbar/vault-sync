@@ -31,7 +31,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Init go mod
-        run: go mod init go-pipeline-test
+        run: go mod init vault-sync
       - name: Install dependencies
         run: go mod tidy
       - name: Install GoReleaser
