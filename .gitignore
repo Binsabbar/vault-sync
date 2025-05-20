@@ -12,6 +12,7 @@
 /dist/
 
 # Go modules
+/go.mod
 /go.work
 /go.work.sum
 
