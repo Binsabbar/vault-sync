@@ -20,26 +20,26 @@ type configFields map[string]interface{}
 var validAppConfig = configFields{
 	"id":                                 "test",
 	"interval":                           5,
+	"log_level":                          "info",
 	"postgres.address":                   "localhost",
 	"postgres.port":                      5432,
 	"postgres.username":                  "u",
 	"postgres.password":                  "p",
 	"postgres.db_name":                   "d",
 	"postgres.max_connection":            "10",
-	"vault.main_cluster.address":         "a",
+	"vault.main_cluster.address":         "http://vault:8200",
 	"vault.main_cluster.app_role":        "r",
 	"vault.main_cluster.app_secret":      "s",
-	"vault.main_cluster.tls_skip_verify": true,
+	"vault.main_cluster.tls_skip_verify": "true",
 	"vault.replica_clusters":             []configFields{validVaultReplicaClusterConfig},
 }
 
 var validVaultReplicaClusterConfig = configFields{
 	"name":            "r2",
-	"address":         "a",
+	"address":         "http://vault-replica-2:8200",
 	"app_role":        "r",
 	"app_secret":      "s",
 	"tls_skip_verify": "true",
-	"tls_cert_file":   "",
 }
 
 func deleteFromMap(m configFields, keys ...string) configFields {
@@ -69,6 +69,7 @@ func TestConfigLoadFromYAML(t *testing.T) {
 
 	require.Equal(t, "test", cfg.ID)
 	require.Equal(t, 5, cfg.Interval)
+	require.Equal(t, "info", cfg.LogLevel)
 
 	// Check Postgres configuration
 	require.Equal(t, "localhost", cfg.Postgres.Address)
@@ -76,11 +77,14 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.Equal(t, "postgres", cfg.Postgres.Username)
 	require.Equal(t, "vault_sync", cfg.Postgres.DBName)
 	require.Equal(t, "disable", cfg.Postgres.SSLMode)
+	require.Equal(t, "/path/to/root.crt", cfg.Postgres.SSLRootCertFile)
+
 	require.Equal(t, 10, cfg.Postgres.MaxConnections)
 
 	// Check Vault configuration main cluster
 	require.Equal(t, "http://vault:8200", cfg.Vault.MainCluster.Address)
 	require.True(t, cfg.Vault.MainCluster.TLSSkipVerify)
+	require.Equal(t, "/path/to/cert.pem", cfg.Vault.MainCluster.TLSCertFile)
 	require.Equal(t, "my_app_role", cfg.Vault.MainCluster.AppRole)
 	require.Equal(t, "my_app_secret", cfg.Vault.MainCluster.AppSecret)
 	require.ElementsMatch(t, []string{"secret/data/test", "secret/data/test2"}, cfg.Vault.MainCluster.PathsToReplicate)
@@ -91,12 +95,16 @@ func TestConfigLoadFromYAML(t *testing.T) {
 
 	replica2 := cfg.Vault.ReplicaClusters[0]
 	require.Equal(t, "replica-2", replica2.Name)
+	require.True(t, replica2.TLSSkipVerify)
+	require.Equal(t, "/path/to/cert-2.pem", replica2.TLSCertFile)
 	require.Equal(t, "http://vault-replica-2:8200", replica2.Address)
 	require.Equal(t, "my_app_role_replica_2", replica2.AppRole)
 	require.Equal(t, "my_app_secret_replica_2", replica2.AppSecret)
 
 	replica3 := cfg.Vault.ReplicaClusters[1]
 	require.Equal(t, "replica-3", replica3.Name)
+	require.True(t, replica3.TLSSkipVerify)
+	require.Equal(t, "/path/to/cert-3.pem", replica3.TLSCertFile)
 	require.Equal(t, "http://vault-replica-3:8200", replica3.Address)
 	require.Equal(t, "my_app_role_replica_3", replica3.AppRole)
 	require.Equal(t, "my_app_secret_replica_3", cfg.Vault.ReplicaClusters[1].AppSecret)
@@ -123,8 +131,9 @@ func TestConfigurationValidation(t *testing.T) {
 		require.Contains(t, err.Error(), "is required")
 	})
 
-	t.Run("It fails on all required field if any is missing", func(t *testing.T) {
+	t.Run("It fails when validation fails", func(t *testing.T) {
 		tests := []configTestTable{
+			// root level
 			{
 				name:        "missing id",
 				setFields:   deleteFromMap(validAppConfig, "id"),
@@ -140,6 +149,18 @@ func TestConfigurationValidation(t *testing.T) {
 				setFields:   updateAndReturnMap(validAppConfig, "interval", "a"),
 				errContains: "cannot parse 'interval' as int",
 			},
+			{
+				name:        "missing log_level",
+				setFields:   deleteFromMap(validAppConfig, "log_level"),
+				errContains: "Config.LogLevel is required",
+			},
+			{
+				name:        "invalid log_level value",
+				setFields:   updateAndReturnMap(validAppConfig, "log_level", "invalid"),
+				errContains: "Config.LogLevel must be one of [trace debug info warn error fatal panic]",
+			},
+
+			// postgres level
 			{
 				name:        "missing postgres.address",
 				setFields:   deleteFromMap(validAppConfig, "postgres.address"),
@@ -186,9 +207,26 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Postgres.DBName is required",
 			},
 			{
+				name:        "invalid postgres.ssl_mode",
+				setFields:   updateAndReturnMap(validAppConfig, "postgres.ssl_mode", "invalid"),
+				errContains: "Config.Postgres.SSLMode must be one of [disable allow prefer require verify-ca verify-full]",
+			},
+			{
+				name:        "invalid postgres.ssl_root_cert_file",
+				setFields:   updateAndReturnMap(validAppConfig, "postgres.ssl_root_cert_file", "invalid+/"),
+				errContains: "Config.Postgres.SSLRootCertFile must be a valid file path",
+			},
+
+			// vault level
+			{
 				name:        "missing vault.main_cluster.address",
 				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.address"),
 				errContains: "Config.Vault.MainCluster.Address is required",
+			},
+			{
+				name:        "invalid vault.main_cluster.address",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.main_cluster.address", "invalid"),
+				errContains: "Config.Vault.MainCluster.Address must be a valid URL",
 			},
 			{
 				name:        "missing vault.main_cluster.app_role",
@@ -201,9 +239,14 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.MainCluster.AppSecret is required",
 			},
 			{
-				name:        "missing vault.main_cluster.tls_skip_verify",
-				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.tls_skip_verify"),
-				errContains: "Config.Vault.MainCluster.TLSSkipVerify is required",
+				name:        "missing vault.main_cluster.tls_cert_file when tls_skip_verify is false",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_skip_verify", "false"),
+				errContains: "Config.Vault.MainCluster.TLSCertFile is required",
+			},
+			{
+				name:        "invalid vault.main_cluster.tls_cert_file",
+				setFields:   updateAndReturnMap(updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_cert_file", "invalid+/"), "vault.main_cluster.tls_skip_verify", "false"),
+				errContains: "Config.Vault.MainCluster.TLSCertFile must be a valid file path",
 			},
 			{
 				name:        "duplicated paths in vault.main_cluster.paths_to_replicate",
@@ -239,6 +282,11 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.ReplicaClusters[0].Address is required",
 			},
 			{
+				name:        "invalid vault.replicat_cluster.address	",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", updateAndReturnMap(validVaultReplicaClusterConfig, "address", "invalid")),
+				errContains: "Config.Vault.ReplicaClusters[0].Address must be a valid URL",
+			},
+			{
 				name:        "missing vault.replicat_cluster.app_role",
 				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role")),
 				errContains: "Config.Vault.ReplicaClusters[0].AppRole is required",
@@ -249,9 +297,14 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.ReplicaClusters[0].AppSecret is required",
 			},
 			{
-				name:        "missing vault.replicat_cluster.tls_skip_verify",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "tls_skip_verify")),
-				errContains: "Config.Vault.ReplicaClusters[0].TLSSkipVerify is required",
+				name:        "missing vault.replicat_cluster.tls_cert_file when tls_skip_verify is false",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", updateAndReturnMap(validVaultReplicaClusterConfig, "tls_skip_verify", "false")),
+				errContains: "Config.Vault.ReplicaClusters[0].TLSCertFile is required",
+			},
+			{
+				name:        "invalid vault.replicat_cluster.tls_cert_file",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", updateAndReturnMap(validVaultReplicaClusterConfig, "tls_cert_file", "invalid+/")),
+				errContains: "Config.Vault.ReplicaClusters[0].TLSCertFile must be a valid file path",
 			},
 		}
 

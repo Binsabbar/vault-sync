@@ -12,18 +12,20 @@ import (
 type Config struct {
 	ID       string   `mapstructure:"id" validate:"required"`
 	Interval int      `mapstructure:"interval" validate:"required"`
+	LogLevel string   `mapstructure:"log_level" validate:"required,oneof=trace debug info warn error fatal panic"`
 	Postgres Postgres `mapstructure:"postgres" validate:"required"`
 	Vault    Vault    `mapstructure:"vault" validate:"required"`
 }
 
 type Postgres struct {
-	Address        string `mapstructure:"address" validate:"required,hostname|ip"`
-	Port           int    `mapstructure:"port" validate:"required,gt=0,lt=65536"`
-	Username       string `mapstructure:"username" validate:"required"`
-	Password       string `mapstructure:"password" validate:"required"`
-	DBName         string `mapstructure:"db_name" validate:"required"`
-	SSLMode        string `mapstructure:"ssl_mode"`
-	MaxConnections int    `mapstructure:"max_connections"`
+	Address         string `mapstructure:"address" validate:"required,hostname|ip"`
+	Port            int    `mapstructure:"port" validate:"required,gt=0,lt=65536"`
+	Username        string `mapstructure:"username" validate:"required"`
+	Password        string `mapstructure:"password" validate:"required"`
+	DBName          string `mapstructure:"db_name" validate:"required"`
+	SSLMode         string `mapstructure:"ssl_mode" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
+	SSLRootCertFile string `mapstructure:"ssl_root_cert_file" validate:"omitempty,filepath"`
+	MaxConnections  int    `mapstructure:"max_connections"`
 }
 
 type Vault struct {
@@ -32,31 +34,32 @@ type Vault struct {
 }
 
 type MainCluster struct {
-	Address          string   `mapstructure:"address" validate:"required"`
+	Address          string   `mapstructure:"address" validate:"required,url"`
 	AppRole          string   `mapstructure:"app_role" validate:"required"`
 	AppSecret        string   `mapstructure:"app_secret" validate:"required"`
-	TLSSkipVerify    bool     `mapstructure:"tls_skip_verify" validate:"required"`
-	TLSCertFile      string   `mapstructure:"tls_cert_file"`
+	TLSSkipVerify    bool     `mapstructure:"tls_skip_verify" validate:"boolean"`
+	TLSCertFile      string   `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
 	PathsToReplicate []string `mapstructure:"paths_to_replicate" validate:"unique"`
 	PathsToIgnore    []string `mapstructure:"paths_to_ignore" validate:"unique"`
 }
 
 type ReplicaCluster struct {
 	Name          string `mapstructure:"name" validate:"required"`
-	Address       string `mapstructure:"address" validate:"required"`
+	Address       string `mapstructure:"address" validate:"required,url"`
 	AppRole       string `mapstructure:"app_role" validate:"required" `
 	AppSecret     string `mapstructure:"app_secret"  validate:"required"`
-	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"required"`
-	TLSCertFile   string `mapstructure:"tls_cert_file"`
+	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
+	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
 }
 
 var validate = validator.New()
 
 func init() {
-	validate.RegisterStructValidation(MainClusterPathsOverlapValidation, MainCluster{})
+	validate.RegisterStructValidation(MainClusterValidation, MainCluster{})
+	validate.RegisterStructValidation(ReplicaClusterValidation, ReplicaCluster{})
 }
 
-func MainClusterPathsOverlapValidation(sl validator.StructLevel) {
+func MainClusterValidation(sl validator.StructLevel) {
 	cluster := sl.Current().Interface().(MainCluster)
 
 	set := make(map[string]struct{}, len(cluster.PathsToReplicate))
@@ -70,6 +73,17 @@ func MainClusterPathsOverlapValidation(sl validator.StructLevel) {
 			sl.ReportError(cluster.PathsToReplicate, "PathsToReplicate", "paths_to_replicate", "no_overlap", "")
 			break
 		}
+	}
+	if !cluster.TLSSkipVerify && cluster.TLSCertFile == "" {
+		sl.ReportError(cluster.TLSCertFile, "TLSCertFile", "tls_cert_file", "required", "")
+	}
+}
+
+func ReplicaClusterValidation(sl validator.StructLevel) {
+	cluster := sl.Current().Interface().(ReplicaCluster)
+
+	if !cluster.TLSSkipVerify && cluster.TLSCertFile == "" {
+		sl.ReportError(cluster.TLSCertFile, "TLSCertFile", "tls_cert_file", "required", "")
 	}
 }
 
@@ -108,6 +122,8 @@ func validateConfig(cfg Config) error {
 			msg = fmt.Sprintf("%s is required", namespace)
 		case "hostname|ip":
 			msg = fmt.Sprintf("%s must be a valid hostname or IP address", namespace)
+		case "url":
+			msg = fmt.Sprintf("%s must be a valid URL", namespace)
 		case "gt":
 			msg = fmt.Sprintf("%s must be greater than %s", namespace, param)
 		case "lt":
@@ -116,6 +132,12 @@ func validateConfig(cfg Config) error {
 			msg = fmt.Sprintf("%s must contain unique items", namespace)
 		case "min":
 			msg = fmt.Sprintf("%s must have at least %s items/characters", namespace, param)
+		case "oneof":
+			msg = fmt.Sprintf("%s must be one of [%s]", namespace, param)
+		case "boolean":
+			msg = fmt.Sprintf("%s must be a boolean (true or false)", namespace)
+		case "filepath":
+			msg = fmt.Sprintf("%s must be a valid file path", namespace)
 		case "no_overlap":
 			otherField := "PathsToReplicate"
 			if fieldError.StructField() == otherField {
