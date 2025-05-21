@@ -10,6 +10,8 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	psqlmigrator "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 )
@@ -61,7 +63,6 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 
 func (p *PostgresDatastore) InitSchema(migrationsPath string) error {
 	log.Logger.Info().Str("migrations_path", migrationsPath).Msg("Initializing database schema via migrations...")
-
 	absMigrationsPath, err := filepath.Abs(migrationsPath)
 	if err != nil {
 		log.Logger.Error().Err(err).Str("path", migrationsPath).Msg("Failed to get absolute path for migrations")
@@ -107,15 +108,11 @@ func (p *PostgresDatastore) Close() error {
 }
 
 func redactDSN(dsnStr string, cfg config.Postgres) string {
-	parsedDSN, err := url.Parse(dsnStr)
-	if err != nil {
-		log.Logger.Warn().Str("original_dsn", dsnStr).Msg("Failed to parse DSN for redaction, returning generic placeholder")
-		return fmt.Sprintf("postgres://%s:*****@%s:%d/%s?sslmode=%s", cfg.Username, cfg.Address, cfg.Port, cfg.DBName, cfg.SSLMode)
-	}
+	parsedDSN, _ := url.Parse(dsnStr)
 
 	if parsedDSN.User != nil {
 		username := parsedDSN.User.Username()
-		parsedDSN.User = url.UserPassword(username, "****")
+		parsedDSN.User = url.UserPassword(username, "xxxxx")
 	}
 
 	return parsedDSN.String()
