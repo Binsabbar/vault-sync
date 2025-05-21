@@ -11,7 +11,6 @@ const (
 )
 
 type SyncedSecret struct {
-	ID                 int64      `db:"id"`
 	SecretBackend      string     `db:"secret_backend"`
 	SecretPath         string     `db:"secret_path"`
 	SourceVersion      int        `db:"source_version"`
