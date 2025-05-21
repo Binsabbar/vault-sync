@@ -230,6 +230,68 @@ func (s *PostgresDatastoreTestSuite) TestGetSyncedSecret() {
 	})
 }
 
+func (s *PostgresDatastoreTestSuite) TestGetSyncedSecrets() {
+	s.connect()
+	defer s.store.Close()
+	s.truncateTable()
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	secret1 := SyncedSecret{
+		SecretBackend:      "kv",
+		SecretPath:         "foo/bar",
+		SourceVersion:      1,
+		DestinationCluster: "cluster1",
+		DestinationVersion: 1,
+		LastSyncAttempt:    now,
+		LastSyncSuccess:    &now,
+		Status:             StatusSuccess,
+		ErrorMessage:       nil,
+	}
+	secret2 := SyncedSecret{
+		SecretBackend:      "kv",
+		SecretPath:         "foo/baz",
+		SourceVersion:      2,
+		DestinationCluster: "cluster2",
+		DestinationVersion: 2,
+		LastSyncAttempt:    now,
+		LastSyncSuccess:    &now,
+		Status:             StatusPending,
+		ErrorMessage:       nil,
+	}
+
+	s.store.db.NamedExec(`
+        INSERT INTO synced_secrets
+        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
+        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
+    `, secret1)
+	s.store.db.NamedExec(`
+        INSERT INTO synced_secrets
+        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
+        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
+    `, secret2)
+
+	s.T().Run("returns all secrets", func(t *testing.T) {
+		secrets, err := s.store.GetSyncedSecrets()
+
+		require.NoError(t, err)
+		require.Len(t, secrets, 2)
+	})
+
+	s.T().Run("returns empty slice if no secrets", func(t *testing.T) {
+		s.truncateTable()
+		secrets, err := s.store.GetSyncedSecrets()
+		require.NoError(t, err)
+		assert.Empty(t, secrets)
+	})
+
+	s.T().Run("returns error on db failure", func(t *testing.T) {
+		s.store.db.Close()
+		secrets, err := s.store.GetSyncedSecrets()
+		assert.Error(t, err)
+		assert.Nil(t, secrets)
+	})
+}
+
 // helper functions
 func (s *PostgresDatastoreTestSuite) connect() {
 	store, err := NewPostgresDatastore(s.pgConfig)
