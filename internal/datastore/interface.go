@@ -1,7 +1,8 @@
 package datastore
 
 type Datastore interface {
-	GetLastSyncedSecret(path, destinationCluster string) (*SyncedSecret, error)
-	RecordSyncAttempt(secret SyncedSecret) error
+	GetSyncedSecret(backend, path, destinationCluster string) (*SyncedSecret, error)
+	UpdateSyncedSecretStatus(secret SyncedSecret) error
+	GetSyncedSecrets() ([]SyncedSecret, error)
 	Close() error
 }

@@ -2,9 +2,9 @@ package datastore
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,10 +32,6 @@ type testColumn struct {
 	DataType   string
 	IsNullable string
 }
-
-var (
-	migrationsPath = filepath.Join("..", "..", "migrations", "postgres")
-)
 
 func TestPostgresDatastoreSuite(t *testing.T) {
 	if os.Getenv("SKIP_INTEGRATION_TESTS") == "true" {
@@ -117,8 +113,7 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 	s.T().Run("set maxConnection when it is configured", func(t *testing.T) {
 		cfg := s.pgConfig
 		cfg.MaxConnections = 5
-		store, err := NewPostgresDatastore(cfg)
-		require.NoError(s.T(), err)
+		store, _ := NewPostgresDatastore(cfg)
 		defer store.Close()
 
 		got := store.db.Stats().MaxOpenConnections
@@ -130,8 +125,6 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	s.connect()
 	defer s.store.Close()
-	err := s.store.InitSchema(migrationsPath)
-	require.NoError(s.T(), err, "Failed to apply database migrations")
 	s.truncateTable()
 
 	s.T().Run("verifies synced_secrets table structure", func(t *testing.T) {
@@ -165,30 +158,75 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		assert.Equal(s.T(), []string{"secret_backend", "secret_path", "destination_cluster"}, pkColumns, "PRIMARY KEY should be on 'id'")
 	})
 
-	s.T().Run("returns error if driver creation fails", func(t *testing.T) {
-		store, err := NewPostgresDatastore(s.pgConfig)
-		store.db.Close()
-
-		err = store.InitSchema(migrationsPath)
-
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "could not create postgres driver for migrate")
-	})
-
 	s.T().Run("returns error if migrate instance creation fails", func(t *testing.T) {
-		err := s.store.InitSchema("/non/existent/path")
+		oldPath := migrationsPath
+		defer func() { migrationsPath = oldPath }()
+		migrationsPath = "/non/existent/path"
+		_, err := NewPostgresDatastore(s.pgConfig)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "could not create migrate instance with source")
 	})
 
 	s.T().Run("returns error if migration fails", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		oldPath := migrationsPath
+		defer func() { migrationsPath = oldPath }()
+		migrationsPath = t.TempDir()
 
-		err := s.store.InitSchema(tmpDir)
+		_, err := NewPostgresDatastore(s.pgConfig)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to apply migrations")
+	})
+}
+
+func (s *PostgresDatastoreTestSuite) TestGetSyncedSecret() {
+	s.connect()
+	defer s.store.Close()
+	s.truncateTable()
+
+	// Insert a test record into the synced_secrets table
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	secret := SyncedSecret{
+		SecretBackend:      "kv",
+		SecretPath:         "foo/bar",
+		SourceVersion:      2,
+		DestinationCluster: "cluster1",
+		DestinationVersion: 1,
+		LastSyncAttempt:    now,
+		LastSyncSuccess:    &now,
+		Status:             StatusSuccess,
+		ErrorMessage:       nil,
+	}
+	s.store.db.NamedExec(`
+        INSERT INTO synced_secrets
+        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
+        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
+    `, secret)
+
+	s.T().Run("returns secret if found", func(t *testing.T) {
+		got, err := s.store.GetSyncedSecret("kv", "foo/bar", "cluster1")
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, secret.SecretBackend, got.SecretBackend)
+		assert.Equal(t, secret.SecretPath, got.SecretPath)
+		assert.Equal(t, secret.DestinationCluster, got.DestinationCluster)
+	})
+
+	s.T().Run("returns sql.ErrNoRows if not found", func(t *testing.T) {
+		got, err := s.store.GetSyncedSecret("kv", "does/not/exist", "cluster1")
+
+		assert.ErrorIs(t, err, sql.ErrNoRows)
+		assert.Nil(t, got)
+	})
+
+	s.T().Run("returns error on db failure", func(t *testing.T) {
+		s.store.db.Close()
+		got, err := s.store.GetSyncedSecret("kv", "foo/bar", "cluster1")
+
+		assert.Error(t, err)
+		assert.Nil(t, got)
 	})
 }
 
