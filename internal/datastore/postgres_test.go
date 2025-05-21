@@ -136,11 +136,10 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 
 	s.T().Run("verifies synced_secrets table structure", func(t *testing.T) {
 		expectedColumns := map[string]testColumn{
-			"id":                  {"integer", "NO"},
 			"secret_backend":      {"text", "NO"},
 			"secret_path":         {"text", "NO"},
-			"source_version":      {"integer", "NO"},
 			"destination_cluster": {"text", "NO"},
+			"source_version":      {"integer", "NO"},
 			"destination_version": {"integer", "YES"},
 			"last_sync_attempt":   {"timestamp with time zone", "NO"},
 			"last_sync_success":   {"timestamp with time zone", "YES"},
@@ -163,12 +162,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	s.T().Run("verifies primary key constraint on id column", func(t *testing.T) {
 		var pkColumns = s.getPrimaryKeyColumns("public", "synced_secrets")
 
-		assert.Equal(s.T(), []string{"id"}, pkColumns, "PRIMARY KEY should be on 'id'")
-	})
-
-	s.T().Run("verifies constraints on synced_secrets table", func(t *testing.T) {
-		uniqueCols := s.getConstraintColumns("UNIQUE", "public", "synced_secrets")
-		assert.ElementsMatch(s.T(), []string{"secret_backend", "secret_path", "destination_cluster"}, uniqueCols, "UNIQUE constraint columns do not match expected")
+		assert.Equal(s.T(), []string{"secret_backend", "secret_path", "destination_cluster"}, pkColumns, "PRIMARY KEY should be on 'id'")
 	})
 
 	s.T().Run("returns error if driver creation fails", func(t *testing.T) {

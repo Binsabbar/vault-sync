@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS synced_secrets (
-    id SERIAL PRIMARY KEY,
     secret_path TEXT NOT NULL,
     secret_backend TEXT NOT NULL,
     source_version INTEGER NOT NULL,
@@ -9,5 +8,5 @@ CREATE TABLE IF NOT EXISTS synced_secrets (
     last_sync_success TIMESTAMPTZ,
     status TEXT NOT NULL,
     error_message TEXT,
-    UNIQUE (secret_backend, secret_path, destination_cluster)
+    PRIMARY KEY (secret_backend, secret_path, destination_cluster)
 );
