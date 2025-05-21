@@ -27,6 +27,7 @@ var (
 
 type PostgresPreparedStatements struct {
 	selectSyncedSecretByPrimaryKey *sqlx.NamedStmt
+	selectAllSyncedSecrets         *sqlx.NamedStmt
 }
 
 func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
@@ -76,47 +77,10 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 	return pd, nil
 }
 
-func (p *PostgresDatastore) initSchema() error {
-	log.Logger.Info().Str("migrations_path", migrationsPath).Msg("Initializing database schema via migrations...")
-	absMigrationsPath, err := filepath.Abs(migrationsPath)
-	if err != nil {
-		log.Logger.Error().Err(err).Str("path", migrationsPath).Msg("Failed to get absolute path for migrations")
-		return fmt.Errorf("failed to get absolute path for migrations at %s: %w", migrationsPath, err)
-	}
-
-	sourceURL := fmt.Sprintf("file://%s", absMigrationsPath)
-	driver, err := psqlmigrator.WithInstance(p.db.DB, &psqlmigrator.Config{})
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("Could not create postgres driver for migrate")
-		return fmt.Errorf("could not create postgres driver for migrate: %w", err)
-	}
-
-	m, err := migrate.NewWithDatabaseInstance(sourceURL, p.db.DriverName(), driver)
-	if err != nil {
-		log.Logger.Error().Err(err).Str("source_url", sourceURL).Msg("Could not create migrate instance")
-		return fmt.Errorf("could not create migrate instance with source '%s': %w", sourceURL, err)
-	}
-
-	log.Logger.Info().Msg("Applying migrations...")
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Logger.Error().Err(err).Msg("Failed to apply migrations")
-		return fmt.Errorf("failed to apply migrations: %w", err)
-	}
-
-	version, dirty, err := m.Version()
-	if err != nil {
-		log.Logger.Warn().Err(err).Msg("Could not get migration version after applying")
-	} else {
-		log.Logger.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations applied.")
-	}
-
-	log.Logger.Info().Msg("Database schema initialized/updated successfully via migrations.")
-	return nil
-}
-
 func (p *PostgresDatastore) Close() error {
 	preparedStatements := []*sqlx.NamedStmt{
 		p.preparedStatements.selectSyncedSecretByPrimaryKey,
+		p.preparedStatements.selectAllSyncedSecrets,
 	}
 	if p.db != nil {
 		log.Logger.Info().Msg("Closing PostgreSQL connection")
@@ -161,19 +125,78 @@ func redactDSN(dsnStr string, cfg config.Postgres) string {
 	return parsedDSN.String()
 }
 
+func (p *PostgresDatastore) GetSyncedSecrets() ([]SyncedSecret, error) {
+	var secrets []SyncedSecret
+	stmt := p.preparedStatements.selectAllSyncedSecrets
+	err := stmt.Select(&secrets, struct{}{})
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("Failed to get all synced secrets")
+		return nil, fmt.Errorf("failed to get all synced secrets: %w", err)
+	}
+	return secrets, nil
+}
+
+func (p *PostgresDatastore) initSchema() error {
+	log.Logger.Info().Str("migrations_path", migrationsPath).Msg("Initializing database schema via migrations...")
+	absMigrationsPath, err := filepath.Abs(migrationsPath)
+	if err != nil {
+		log.Logger.Error().Err(err).Str("path", migrationsPath).Msg("Failed to get absolute path for migrations")
+		return fmt.Errorf("failed to get absolute path for migrations at %s: %w", migrationsPath, err)
+	}
+
+	sourceURL := fmt.Sprintf("file://%s", absMigrationsPath)
+	driver, err := psqlmigrator.WithInstance(p.db.DB, &psqlmigrator.Config{})
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("Could not create postgres driver for migrate")
+		return fmt.Errorf("could not create postgres driver for migrate: %w", err)
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(sourceURL, p.db.DriverName(), driver)
+	if err != nil {
+		log.Logger.Error().Err(err).Str("source_url", sourceURL).Msg("Could not create migrate instance")
+		return fmt.Errorf("could not create migrate instance with source '%s': %w", sourceURL, err)
+	}
+
+	log.Logger.Info().Msg("Applying migrations...")
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Logger.Error().Err(err).Msg("Failed to apply migrations")
+		return fmt.Errorf("failed to apply migrations: %w", err)
+	}
+
+	version, dirty, err := m.Version()
+	if err != nil {
+		log.Logger.Warn().Err(err).Msg("Could not get migration version after applying")
+	} else {
+		log.Logger.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations applied.")
+	}
+
+	log.Logger.Info().Msg("Database schema initialized/updated successfully via migrations.")
+	return nil
+}
+
 func (p *PostgresDatastore) initPreparedStatements() error {
 	log.Logger.Info().Msg("Initializing prepared statements for PostgreSQL")
-	stmt, err := p.db.PrepareNamed(`
-        SELECT secret_backend, secret_path, source_version, destination_cluster, destination_version,
-               last_sync_attempt, last_sync_success, status, error_message
-        FROM synced_secrets
-        WHERE secret_backend = :secret_backend AND secret_path = :secret_path AND destination_cluster = :destination_cluster
+	stmtByPK, err := p.db.PrepareNamed(`
+        SELECT * 
+				FROM synced_secrets
+        WHERE 
+					secret_backend = :secret_backend AND secret_path = :secret_path AND destination_cluster = :destination_cluster
         LIMIT 1`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare selectSyncedSecretByPrimaryKey: %w", err)
 	}
-	p.preparedStatements = &PostgresPreparedStatements{
-		selectSyncedSecretByPrimaryKey: stmt,
+
+	stmtAll, err := p.db.PrepareNamed(`
+        SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`)
+	if err != nil {
+		stmtByPK.Close()
+		return fmt.Errorf("failed to prepare selectAllSyncedSecrets: %w", err)
 	}
+
+	p.preparedStatements = &PostgresPreparedStatements{
+		selectSyncedSecretByPrimaryKey: stmtByPK,
+		selectAllSyncedSecrets:         stmtAll,
+	}
+
 	return nil
 }
