@@ -11,13 +11,14 @@ const (
 )
 
 type SyncedSecret struct {
-	ID                 int64      // Primary key
+	ID                 int64      `db:"id"`
+	SecretBackend      string     `db:"secret_backend"`
 	SecretPath         string     `db:"secret_path"`
-	SourceVersion      int        `db:"source_version"` // Version from the main cluster
+	SourceVersion      int        `db:"source_version"`
 	DestinationCluster string     `db:"destination_cluster"`
-	DestinationVersion int        `db:"destination_version"` // Version written to destination (might be same as source)
+	DestinationVersion int        `db:"destination_version"`
 	LastSyncAttempt    time.Time  `db:"last_sync_attempt"`
-	LastSyncSuccess    *time.Time `db:"last_sync_success"` // Pointer for nullable
+	LastSyncSuccess    *time.Time `db:"last_sync_success"`
 	Status             SyncStatus `db:"status"`
-	ErrorMessage       *string    `db:"error_message"` // Pointer for nullable
+	ErrorMessage       *string    `db:"error_message"`
 }
