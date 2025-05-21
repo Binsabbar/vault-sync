@@ -17,7 +17,16 @@ import (
 )
 
 type PostgresDatastore struct {
-	db *sqlx.DB
+	db                 *sqlx.DB
+	preparedStatements *PostgresPreparedStatements
+}
+
+var (
+	migrationsPath = filepath.Join("..", "..", "migrations", "postgres")
+)
+
+type PostgresPreparedStatements struct {
+	selectSyncedSecretByPrimaryKey *sqlx.NamedStmt
 }
 
 func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
@@ -57,11 +66,17 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 		db.SetMaxOpenConns(cfg.MaxConnections)
 		log.Logger.Info().Int("max_connections", cfg.MaxConnections).Msg("Set max open connections for PostgreSQL")
 	}
-
-	return &PostgresDatastore{db: db}, nil
+	pd := &PostgresDatastore{db: db}
+	err = pd.initSchema()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	pd.initPreparedStatements()
+	return pd, nil
 }
 
-func (p *PostgresDatastore) InitSchema(migrationsPath string) error {
+func (p *PostgresDatastore) initSchema() error {
 	log.Logger.Info().Str("migrations_path", migrationsPath).Msg("Initializing database schema via migrations...")
 	absMigrationsPath, err := filepath.Abs(migrationsPath)
 	if err != nil {
@@ -100,11 +115,39 @@ func (p *PostgresDatastore) InitSchema(migrationsPath string) error {
 }
 
 func (p *PostgresDatastore) Close() error {
+	preparedStatements := []*sqlx.NamedStmt{
+		p.preparedStatements.selectSyncedSecretByPrimaryKey,
+	}
 	if p.db != nil {
 		log.Logger.Info().Msg("Closing PostgreSQL connection")
+		for _, stmt := range preparedStatements {
+			if stmt != nil {
+				log.Logger.Info().Msg("Closing prepared statement")
+				if err := stmt.Close(); err != nil {
+					log.Logger.Error().Err(err).Msg("Failed to close prepared statement")
+				}
+			}
+		}
 		return p.db.Close()
 	}
 	return nil
+}
+
+func (p *PostgresDatastore) GetSyncedSecret(backend, path, destinationCluster string) (*SyncedSecret, error) {
+	args := map[string]interface{}{
+		"secret_backend":      backend,
+		"secret_path":         path,
+		"destination_cluster": destinationCluster,
+	}
+	var secret SyncedSecret
+
+	err := p.preparedStatements.selectSyncedSecretByPrimaryKey.Get(&secret, args)
+	if err != nil {
+		log.Logger.Error().Err(err).Str("args", fmt.Sprintf("%s,%s,%s", backend, path, destinationCluster)).Msg("Failed to get synced secret")
+		return nil, fmt.Errorf("failed to get synced secret: %w", err)
+	}
+	log.Logger.Info().Str("args", fmt.Sprintf("%s,%s,%s", backend, path, destinationCluster)).Msg("Successfully retrieved synced secret")
+	return &secret, nil
 }
 
 func redactDSN(dsnStr string, cfg config.Postgres) string {
@@ -116,4 +159,21 @@ func redactDSN(dsnStr string, cfg config.Postgres) string {
 	}
 
 	return parsedDSN.String()
+}
+
+func (p *PostgresDatastore) initPreparedStatements() error {
+	log.Logger.Info().Msg("Initializing prepared statements for PostgreSQL")
+	stmt, err := p.db.PrepareNamed(`
+        SELECT secret_backend, secret_path, source_version, destination_cluster, destination_version,
+               last_sync_attempt, last_sync_success, status, error_message
+        FROM synced_secrets
+        WHERE secret_backend = :secret_backend AND secret_path = :secret_path AND destination_cluster = :destination_cluster
+        LIMIT 1`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare selectSyncedSecretByPrimaryKey: %w", err)
+	}
+	p.preparedStatements = &PostgresPreparedStatements{
+		selectSyncedSecretByPrimaryKey: stmt,
+	}
+	return nil
 }
