@@ -1,4 +1,4 @@
-name: test
+name: Test & SAST
 
 on:
   workflow_call:
@@ -14,7 +14,7 @@ on:
 
 
 jobs:
-  test:
+  Test_and_SAST:
     runs-on: ubuntu-latest
 
     steps:
