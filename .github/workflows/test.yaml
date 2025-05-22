@@ -50,7 +50,19 @@ jobs:
         run: go build -v ./...
 
       - name: Test with the Go CLI
-        run: go test ./...
+        run: go test -v ./...
+
+      - name: Display Docker logs on failure
+        if: failure()
+        run: |
+          echo "Listing all Docker containers..."
+          docker ps -a
+          echo "Attempting to display logs for all containers..."
+          for id in $(docker ps -aq); do
+            echo "Logs for container $id:"
+            docker logs $id || echo "Failed to get logs for container $id"
+            echo "\n---\n"
+          done
       
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
