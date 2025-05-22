@@ -1,9 +1,9 @@
-name: Snapshot Release (Dev Branches)
+name: snapshot release
 
 on:
   workflow_dispatch: # Allows manual triggering of the workflow
   workflow_run:
-    workflows: ['Test & SAST']
+    workflows: ['test']
     types: [completed]
     branches:
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
