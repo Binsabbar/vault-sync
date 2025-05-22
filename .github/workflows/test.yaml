@@ -1,4 +1,4 @@
-name: Test & SAST
+name: test
 
 on:
   workflow_call:
@@ -14,7 +14,7 @@ on:
 
 
 jobs:
-  Test_and_SAST:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -34,14 +34,6 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-
-      - name: Init go mod (only if not present)
-        run: |
-          if [ ! -f go.mod ]; then
-            go mod init vault-sync
-          else
-            echo "go.mod already exists, skipping go mod init"
-          fi
 
       - name: Install dependencies
         run: go mod tidy
