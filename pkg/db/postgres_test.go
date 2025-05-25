@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -57,6 +59,9 @@ func (s *PostgresDatastoreTestSuite) SetupSuite() {
 				WithStartupTimeout(1*time.Minute),
 			wait.ForExposedPort().WithStartupTimeout(1*time.Minute),
 		),
+		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
+			hostConfig.PortBindings = nat.PortMap{nat.Port("5432/tcp"): []nat.PortBinding{{HostPort: "15432"}}}
+		}),
 	)
 
 	require.NoError(s.T(), err, "Failed to start PostgreSQL container")
@@ -95,12 +100,12 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 
 	s.T().Run("successful connection to postgres", func(t *testing.T) {
 		store, err := NewPostgresDatastore(*s.pgConfig)
+		s.store = store
 		require.NoError(s.T(), err, "Should create datastore without error")
-		defer store.Close()
 
-		assert.NotNil(s.T(), store, "Expected store to be non-nil on successful connection")
-		assert.NotNil(s.T(), store.DB, "Expected store.DB to be non-nil on successful connection")
-		assert.Equal(s.T(), "pgx", store.DB.DriverName(), "Expected driver name to be 'pgx'")
+		assert.NotNil(s.T(), s.store, "Expected store to be non-nil on successful connection")
+		assert.NotNil(s.T(), s.store.DB, "Expected store.DB to be non-nil on successful connection")
+		assert.Equal(s.T(), "pgx", s.store.DB.DriverName(), "Expected driver name to be 'pgx'")
 	})
 
 	s.T().Run("db connection failure returns error", func(t *testing.T) {
@@ -110,7 +115,6 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 			Username: "wrong",
 			Password: "wrong",
 			DBName:   "wrongdb",
-			SSLMode:  "disable",
 		}
 
 		store, err := NewPostgresDatastore(badConfig)
@@ -123,12 +127,12 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 	s.T().Run("set maxConnection when it is configured", func(t *testing.T) {
 		cfg := *s.pgConfig
 		cfg.MaxConnections = 5
-
 		store, err := NewPostgresDatastore(cfg)
+		s.store = store
 		require.NoError(s.T(), err, "Should create datastore without error")
-		defer store.Close()
 
-		got := store.DB.Stats().MaxOpenConnections
+		got := s.store.DB.Stats().MaxOpenConnections
+
 		assert.Equal(s.T(), cfg.MaxConnections, got, "MaxOpenConnections should match config.MaxConnections")
 	})
 }
@@ -151,7 +155,6 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		store, err := NewPostgresDatastore(*s.pgConfig)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
-		defer s.store.Close()
 
 		actualColumns := s.getColumns("public", "synced_secrets")
 
@@ -169,7 +172,6 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		store, err := NewPostgresDatastore(*s.pgConfig)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
-		defer s.store.Close()
 
 		var pkColumns = s.getPrimaryKeyColumns("public", "synced_secrets")
 
@@ -199,13 +201,52 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	})
 }
 
-// helper functions
-// func (s *PostgresDatastoreTestSuite) truncateTable() {
-// 	if s.store != nil || s.store.DB != nil {
-// 		_, err := s.store.DB.Exec("TRUNCATE TABLE synced_secrets RESTART IDENTITY")
-// 		require.NoError(s.T(), err, "Failed to truncate synced_secrets table")
-// 	}
-// }
+func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
+	s.T().Run("health check continues after database temporary outage", func(t *testing.T) {
+		shortInterval := 300 * time.Millisecond
+		originalHealthCheckPeriod := defaultHealthCheckPeriod
+		defaultHealthCheckPeriod = shortInterval
+		defer func() { defaultHealthCheckPeriod = originalHealthCheckPeriod }()
+
+		config := *s.pgConfig
+		store, err := NewPostgresDatastore(config)
+		require.NoError(t, err)
+		s.store = store
+
+		// Let it run a few cycles
+		time.Sleep(shortInterval * 3)
+
+		// Pause the container to simulate a DB outage
+		ctx := context.Background()
+		err = s.pgContainer.Stop(ctx, &shortInterval)
+
+		// Wait for a few health check cycles during the outage
+		time.Sleep(shortInterval * 3)
+
+		// Resume the container
+		err = s.pgContainer.Start(ctx)
+		require.NoError(t, err)
+
+		// Wait for recovery
+		time.Sleep(time.Second * 3)
+
+		var count int
+		err = store.DB.Get(&count, "SELECT 1")
+		assert.NoError(t, err, "Database should be working after recovery")
+	})
+
+	s.T().Run("it stops helathcheck when DB is closed", func(t *testing.T) {
+		config := *s.pgConfig
+		store, err := NewPostgresDatastore(config)
+		s.store = store
+		require.NoError(t, err, "Should create datastore without error")
+
+		s.store.Close()
+
+		assert.Nil(t, s.store.healthCheckInterval)
+		assert.Nil(t, s.store.stopHealthCheckCh)
+	})
+}
 
 func (s *PostgresDatastoreTestSuite) getColumns(schema string, table string) map[string]testColumn {
 	query := `
