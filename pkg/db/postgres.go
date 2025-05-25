@@ -72,11 +72,14 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 }
 
 func (p *PostgresDatastore) Close() error {
-	if p.healthCheckInterval != nil {
-		p.stopHealthCheckCh <- struct{}{}
-		p.healthCheckDone.Wait()
+	if p.healthCheckInterval != nil && p.stopHealthCheckCh != nil {
+		select {
+		case p.stopHealthCheckCh <- struct{}{}:
+			log.Logger.Info().Msg("Waiting for PostgreSQL health check to finish...")
+			p.healthCheckDone.Wait()
+		default:
+		}
 	}
-	log.Logger.Info().Msg("Waiting for PostgreSQL health check to finish...")
 	if p.DB != nil {
 		log.Logger.Info().Msg("Closing PostgreSQL connection")
 		return p.DB.Close()
@@ -180,11 +183,11 @@ func (p *PostgresDatastore) startHealthCheck() {
 			select {
 			case <-p.healthCheckInterval.C:
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
 				err := p.DB.PingContext(ctx)
 				if err != nil {
 					log.Logger.Warn().Err(err).Msg("Database health check failed")
 				}
+				cancel()
 			case <-p.stopHealthCheckCh:
 				log.Logger.Info().Msg("Stopping database health check")
 				p.healthCheckInterval.Stop()
