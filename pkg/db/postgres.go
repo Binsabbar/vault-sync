@@ -1,9 +1,11 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -17,16 +19,20 @@ import (
 	"vault-sync/pkg/log"
 )
 
+var defaultHealthCheckPeriod = 1 * time.Minute
+
 type PostgresDatastore struct {
-	DB *sqlx.DB
+	DB                  *sqlx.DB
+	healthCheckInterval *time.Ticker
+	stopHealthCheckCh   chan struct{}
+	healthCheckDone     sync.WaitGroup
 }
 
 type PostgresConfig struct {
 	config.Postgres
-	MinimumConns      int
-	ConnMaxLifetime   time.Duration
-	ConnMaxIdleTime   time.Duration
-	HealthCheckPeriod time.Duration
+	MinimumConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
 }
 
 var migrationsPath = filepath.Join(".", "migrations", "postgres")
@@ -34,6 +40,7 @@ var migrationsPath = filepath.Join(".", "migrations", "postgres")
 func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 	connectionString := buildPostgresDSN(cfg)
 	redactedConnectionString := redactDSN(connectionString)
+
 	log.Logger.Info().Str("dsn", redactedConnectionString).Msg("Attempting to connect to PostgreSQL")
 
 	db, err := sqlx.Connect("pgx", connectionString)
@@ -42,7 +49,9 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 	}
 
-	setPoolConfig(cfg, db)
+	defaultPoolConfig := defaultPoolConfig()
+	defaultPoolConfig.Postgres = cfg
+	setPoolConfig(defaultPoolConfig, db)
 
 	if err := db.Ping(); err != nil {
 		log.Logger.Error().Err(err).Str("dsn", redactedConnectionString).Msg("Failed to ping database")
@@ -50,12 +59,24 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 	}
 
 	log.Logger.Info().Str("dsn", redactedConnectionString).Msg("Successfully connected to PostgreSQL")
-	psqlDB := &PostgresDatastore{DB: db}
+
+	psqlDB := &PostgresDatastore{
+		DB:                  db,
+		healthCheckInterval: time.NewTicker(defaultHealthCheckPeriod),
+		stopHealthCheckCh:   make(chan struct{}),
+	}
+
+	psqlDB.startHealthCheck()
 
 	return psqlDB, psqlDB.initSchema()
 }
 
 func (p *PostgresDatastore) Close() error {
+	if p.healthCheckInterval != nil {
+		p.stopHealthCheckCh <- struct{}{}
+		p.healthCheckDone.Wait()
+	}
+	log.Logger.Info().Msg("Waiting for PostgreSQL health check to finish...")
 	if p.DB != nil {
 		log.Logger.Info().Msg("Closing PostgreSQL connection")
 		return p.DB.Close()
@@ -132,26 +153,50 @@ func buildPostgresDSN(cfg config.Postgres) string {
 
 func defaultPoolConfig() PostgresConfig {
 	return PostgresConfig{
-		MinimumConns:      5,
-		ConnMaxLifetime:   15 * time.Minute,
-		ConnMaxIdleTime:   5 * time.Minute,
-		HealthCheckPeriod: 5 * time.Minute,
+		MinimumConns:    5,
+		ConnMaxLifetime: 15 * time.Minute,
+		ConnMaxIdleTime: 5 * time.Minute,
 	}
 }
 
-func setPoolConfig(cfg config.Postgres, db *sqlx.DB) {
-	defaultPoolConfig := defaultPoolConfig()
-	defaultPoolConfig.Postgres = cfg
-
-	db.SetMaxIdleConns(defaultPoolConfig.MinimumConns)
-	db.SetMaxOpenConns(defaultPoolConfig.MaxConnections)
-	db.SetConnMaxIdleTime(defaultPoolConfig.ConnMaxIdleTime)
-	db.SetConnMaxLifetime(defaultPoolConfig.ConnMaxLifetime)
+func setPoolConfig(cfg PostgresConfig, db *sqlx.DB) {
+	db.SetMaxIdleConns(cfg.MinimumConns)
+	db.SetMaxOpenConns(cfg.MaxConnections)
+	db.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
+	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
 	log.Logger.Debug().
-		Int("max_open", defaultPoolConfig.MaxConnections).
-		Int("max_idle", defaultPoolConfig.MinimumConns).
-		Dur("max_lifetime", defaultPoolConfig.ConnMaxLifetime).
-		Dur("max_idle_time", defaultPoolConfig.ConnMaxIdleTime).
+		Int("max_open", cfg.MaxConnections).
+		Int("max_idle", cfg.MinimumConns).
+		Dur("max_lifetime", cfg.ConnMaxLifetime).
+		Dur("max_idle_time", cfg.ConnMaxIdleTime).
 		Msg("Configured PostgreSQL connection pool")
+}
+
+func (p *PostgresDatastore) startHealthCheck() {
+	p.healthCheckDone.Add(1)
+	go func() {
+		for {
+			select {
+			case <-p.healthCheckInterval.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				err := p.DB.PingContext(ctx)
+				if err != nil {
+					log.Logger.Warn().Err(err).Msg("Database health check failed")
+				}
+			case <-p.stopHealthCheckCh:
+				log.Logger.Info().Msg("Stopping database health check")
+				p.healthCheckInterval.Stop()
+				close(p.stopHealthCheckCh)
+				log.Logger.Info().Msg("Stopped PostgreSQL health check")
+				p.healthCheckInterval = nil
+				p.stopHealthCheckCh = nil
+				p.healthCheckDone.Done()
+				return
+			}
+		}
+	}()
+
+	log.Logger.Info().Msg("Started database health check")
 }
