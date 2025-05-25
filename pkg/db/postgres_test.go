@@ -66,9 +66,9 @@ func (s *PostgresDatastoreTestSuite) SetupSuite() {
 
 	require.NoError(s.T(), err, "Failed to start PostgreSQL container")
 
-	host, err := s.pgContainer.Host(ctx)
-	portNat, err := s.pgContainer.MappedPort(ctx, "5432/tcp")
-	port, err := strconv.Atoi(portNat.Port())
+	host, _ := s.pgContainer.Host(ctx)
+	portNat, _ := s.pgContainer.MappedPort(ctx, "5432/tcp")
+	port, _ := strconv.Atoi(portNat.Port())
 
 	s.pgConfig = &config.Postgres{
 		Address:  host,
@@ -216,7 +216,6 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 		// Let it run a few cycles
 		time.Sleep(shortInterval * 3)
 
-		// Pause the container to simulate a DB outage
 		ctx := context.Background()
 		err = s.pgContainer.Stop(ctx, &shortInterval)
 
@@ -227,15 +226,14 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 		err = s.pgContainer.Start(ctx)
 		require.NoError(t, err)
 
-		// Wait for recovery
-		time.Sleep(time.Second * 3)
-
-		var count int
-		err = store.DB.Get(&count, "SELECT 1")
-		assert.NoError(t, err, "Database should be working after recovery")
+		assert.Eventually(t, func() bool {
+			var count int
+			err = store.DB.Get(&count, "SELECT 1")
+			return err == nil && count == 1
+		}, time.Second*10, time.Millisecond*100, "Health check should still be running after recovery")
 	})
 
-	s.T().Run("it stops helathcheck when DB is closed", func(t *testing.T) {
+	s.T().Run("it stops healthcheck when DB is closed", func(t *testing.T) {
 		config := *s.pgConfig
 		store, err := NewPostgresDatastore(config)
 		s.store = store
