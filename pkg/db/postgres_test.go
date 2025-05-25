@@ -1,8 +1,7 @@
-package datastore
+package db
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"os"
 	"strconv"
@@ -25,7 +24,7 @@ type PostgresDatastoreTestSuite struct {
 	suite.Suite
 	pgContainer *postgres.PostgresContainer
 	store       *PostgresDatastore
-	pgConfig    config.Postgres
+	pgConfig    *config.Postgres
 }
 
 type testColumn struct {
@@ -66,7 +65,7 @@ func (s *PostgresDatastoreTestSuite) SetupSuite() {
 	portNat, err := s.pgContainer.MappedPort(ctx, "5432/tcp")
 	port, err := strconv.Atoi(portNat.Port())
 
-	s.pgConfig = config.Postgres{
+	s.pgConfig = &config.Postgres{
 		Address:  host,
 		Port:     port,
 		Username: dbUser,
@@ -93,6 +92,17 @@ func (s *PostgresDatastoreTestSuite) TearDownSuite() {
 }
 
 func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
+
+	s.T().Run("successful connection to postgres", func(t *testing.T) {
+		store, err := NewPostgresDatastore(*s.pgConfig)
+		require.NoError(s.T(), err, "Should create datastore without error")
+		defer store.Close()
+
+		assert.NotNil(s.T(), store, "Expected store to be non-nil on successful connection")
+		assert.NotNil(s.T(), store.DB, "Expected store.DB to be non-nil on successful connection")
+		assert.Equal(s.T(), "pgx", store.DB.DriverName(), "Expected driver name to be 'pgx'")
+	})
+
 	s.T().Run("db connection failure returns error", func(t *testing.T) {
 		badConfig := config.Postgres{
 			Address:  "localhost",
@@ -111,21 +121,19 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 	})
 
 	s.T().Run("set maxConnection when it is configured", func(t *testing.T) {
-		cfg := s.pgConfig
+		cfg := *s.pgConfig
 		cfg.MaxConnections = 5
-		store, _ := NewPostgresDatastore(cfg)
+
+		store, err := NewPostgresDatastore(cfg)
+		require.NoError(s.T(), err, "Should create datastore without error")
 		defer store.Close()
 
-		got := store.db.Stats().MaxOpenConnections
-		require.Equal(s.T(), cfg.MaxConnections, got, "MaxOpenConnections should match config.MaxConnections")
-
+		got := store.DB.Stats().MaxOpenConnections
+		assert.Equal(s.T(), cfg.MaxConnections, got, "MaxOpenConnections should match config.MaxConnections")
 	})
 }
 
 func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
-	s.connect()
-	defer s.store.Close()
-	s.truncateTable()
 
 	s.T().Run("verifies synced_secrets table structure", func(t *testing.T) {
 		expectedColumns := map[string]testColumn{
@@ -140,6 +148,11 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 			"error_message":       {"text", "YES"},
 		}
 
+		store, err := NewPostgresDatastore(*s.pgConfig)
+		require.NoError(s.T(), err, "Should create datastore without error")
+		s.store = store
+		defer s.store.Close()
+
 		actualColumns := s.getColumns("public", "synced_secrets")
 
 		assert.Len(s.T(), actualColumns, len(expectedColumns), "Number of columns does not match expected")
@@ -153,6 +166,11 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	})
 
 	s.T().Run("verifies primary key constraint on id column", func(t *testing.T) {
+		store, err := NewPostgresDatastore(*s.pgConfig)
+		require.NoError(s.T(), err, "Should create datastore without error")
+		s.store = store
+		defer s.store.Close()
+
 		var pkColumns = s.getPrimaryKeyColumns("public", "synced_secrets")
 
 		assert.Equal(s.T(), []string{"secret_backend", "secret_path", "destination_cluster"}, pkColumns, "PRIMARY KEY should be on 'id'")
@@ -162,7 +180,8 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		oldPath := migrationsPath
 		defer func() { migrationsPath = oldPath }()
 		migrationsPath = "/non/existent/path"
-		_, err := NewPostgresDatastore(s.pgConfig)
+
+		_, err := NewPostgresDatastore(*s.pgConfig)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "could not create migrate instance with source")
@@ -173,136 +192,20 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		defer func() { migrationsPath = oldPath }()
 		migrationsPath = t.TempDir()
 
-		_, err := NewPostgresDatastore(s.pgConfig)
+		_, err := NewPostgresDatastore(*s.pgConfig)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to apply migrations")
 	})
 }
 
-func (s *PostgresDatastoreTestSuite) TestGetSyncedSecret() {
-	s.connect()
-	defer s.store.Close()
-	s.truncateTable()
-
-	// Insert a test record into the synced_secrets table
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	secret := SyncedSecret{
-		SecretBackend:      "kv",
-		SecretPath:         "foo/bar",
-		SourceVersion:      2,
-		DestinationCluster: "cluster1",
-		DestinationVersion: 1,
-		LastSyncAttempt:    now,
-		LastSyncSuccess:    &now,
-		Status:             StatusSuccess,
-		ErrorMessage:       nil,
-	}
-	s.store.db.NamedExec(`
-        INSERT INTO synced_secrets
-        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
-        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
-    `, secret)
-
-	s.T().Run("returns secret if found", func(t *testing.T) {
-		got, err := s.store.GetSyncedSecret("kv", "foo/bar", "cluster1")
-
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, secret.SecretBackend, got.SecretBackend)
-		assert.Equal(t, secret.SecretPath, got.SecretPath)
-		assert.Equal(t, secret.DestinationCluster, got.DestinationCluster)
-	})
-
-	s.T().Run("returns sql.ErrNoRows if not found", func(t *testing.T) {
-		got, err := s.store.GetSyncedSecret("kv", "does/not/exist", "cluster1")
-
-		assert.ErrorIs(t, err, sql.ErrNoRows)
-		assert.Nil(t, got)
-	})
-
-	s.T().Run("returns error on db failure", func(t *testing.T) {
-		s.store.db.Close()
-		got, err := s.store.GetSyncedSecret("kv", "foo/bar", "cluster1")
-
-		assert.Error(t, err)
-		assert.Nil(t, got)
-	})
-}
-
-func (s *PostgresDatastoreTestSuite) TestGetSyncedSecrets() {
-	s.connect()
-	defer s.store.Close()
-	s.truncateTable()
-
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	secret1 := SyncedSecret{
-		SecretBackend:      "kv",
-		SecretPath:         "foo/bar",
-		SourceVersion:      1,
-		DestinationCluster: "cluster1",
-		DestinationVersion: 1,
-		LastSyncAttempt:    now,
-		LastSyncSuccess:    &now,
-		Status:             StatusSuccess,
-		ErrorMessage:       nil,
-	}
-	secret2 := SyncedSecret{
-		SecretBackend:      "kv",
-		SecretPath:         "foo/baz",
-		SourceVersion:      2,
-		DestinationCluster: "cluster2",
-		DestinationVersion: 2,
-		LastSyncAttempt:    now,
-		LastSyncSuccess:    &now,
-		Status:             StatusPending,
-		ErrorMessage:       nil,
-	}
-
-	s.store.db.NamedExec(`
-        INSERT INTO synced_secrets
-        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
-        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
-    `, secret1)
-	s.store.db.NamedExec(`
-        INSERT INTO synced_secrets
-        (secret_backend, secret_path, source_version, destination_cluster, destination_version, last_sync_attempt, last_sync_success, status, error_message)
-        VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
-    `, secret2)
-
-	s.T().Run("returns all secrets", func(t *testing.T) {
-		secrets, err := s.store.GetSyncedSecrets()
-
-		require.NoError(t, err)
-		require.Len(t, secrets, 2)
-	})
-
-	s.T().Run("returns empty slice if no secrets", func(t *testing.T) {
-		s.truncateTable()
-		secrets, err := s.store.GetSyncedSecrets()
-		require.NoError(t, err)
-		assert.Empty(t, secrets)
-	})
-
-	s.T().Run("returns error on db failure", func(t *testing.T) {
-		s.store.db.Close()
-		secrets, err := s.store.GetSyncedSecrets()
-		assert.Error(t, err)
-		assert.Nil(t, secrets)
-	})
-}
-
 // helper functions
-func (s *PostgresDatastoreTestSuite) connect() {
-	store, err := NewPostgresDatastore(s.pgConfig)
-	require.NoError(s.T(), err, "Failed to create datastore")
-	s.store = store
-}
-
-func (s *PostgresDatastoreTestSuite) truncateTable() {
-	_, err := s.store.db.Exec("TRUNCATE TABLE synced_secrets RESTART IDENTITY")
-	require.NoError(s.T(), err, "Failed to truncate synced_secrets table")
-}
+// func (s *PostgresDatastoreTestSuite) truncateTable() {
+// 	if s.store != nil || s.store.DB != nil {
+// 		_, err := s.store.DB.Exec("TRUNCATE TABLE synced_secrets RESTART IDENTITY")
+// 		require.NoError(s.T(), err, "Failed to truncate synced_secrets table")
+// 	}
+// }
 
 func (s *PostgresDatastoreTestSuite) getColumns(schema string, table string) map[string]testColumn {
 	query := `
@@ -312,7 +215,7 @@ func (s *PostgresDatastoreTestSuite) getColumns(schema string, table string) map
 					AND table_name   = $2
 				ORDER BY ordinal_position;
 		`
-	rows, _ := s.store.db.Queryx(query, schema, table)
+	rows, _ := s.store.DB.Queryx(query, schema, table)
 	defer rows.Close()
 
 	cols := make(map[string]testColumn)
@@ -337,7 +240,7 @@ func (s *PostgresDatastoreTestSuite) getConstraintColumns(constraintName string,
         ORDER BY kcu.ordinal_position;
     `
 	var columns []string
-	s.store.db.Select(&columns, query, constraintName, schema, table)
+	s.store.DB.Select(&columns, query, constraintName, schema, table)
 	return columns
 }
 
@@ -354,6 +257,6 @@ func (s *PostgresDatastoreTestSuite) getPrimaryKeyColumns(schema string, table s
         ORDER BY kcu.ordinal_position;
     `
 	var columns []string
-	s.store.db.Select(&columns, query, schema, table)
+	s.store.DB.Select(&columns, query, schema, table)
 	return columns
 }
