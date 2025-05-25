@@ -4,29 +4,22 @@ import (
 	"context"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-
 	"vault-sync/internal/config"
+	"vault-sync/testutil"
 )
 
 type PostgresDatastoreTestSuite struct {
 	suite.Suite
-	pgContainer *postgres.PostgresContainer
-	store       *PostgresDatastore
-	pgConfig    *config.Postgres
+	pgHelper *testutil.PostgresHelper
+	store    *PostgresDatastore
 }
 
 type testColumn struct {
@@ -45,39 +38,8 @@ func (s *PostgresDatastoreTestSuite) SetupSuite() {
 	ctx := context.Background()
 	var err error
 
-	dbUser := "testuser"
-	dbPassword := "testpassword"
-	dbName := "test_db"
-	s.pgContainer, err = postgres.Run(ctx,
-		"postgres:15-alpine",
-		postgres.WithDatabase(dbName),
-		postgres.WithUsername(dbUser),
-		postgres.WithPassword(dbPassword),
-		postgres.WithSQLDriver("pgx"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithStartupTimeout(1*time.Minute),
-			wait.ForExposedPort().WithStartupTimeout(1*time.Minute),
-		),
-		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
-			hostConfig.PortBindings = nat.PortMap{nat.Port("5432/tcp"): []nat.PortBinding{{HostPort: "15432"}}}
-		}),
-	)
-
-	require.NoError(s.T(), err, "Failed to start PostgreSQL container")
-
-	host, _ := s.pgContainer.Host(ctx)
-	portNat, _ := s.pgContainer.MappedPort(ctx, "5432/tcp")
-	port, _ := strconv.Atoi(portNat.Port())
-
-	s.pgConfig = &config.Postgres{
-		Address:  host,
-		Port:     port,
-		Username: dbUser,
-		Password: dbPassword,
-		DBName:   dbName,
-		SSLMode:  "disable",
-	}
+	s.pgHelper, err = testutil.NewPostgresContainer(s.T(), ctx)
+	require.NoError(s.T(), err, "Failed to create Postgres test container")
 }
 
 func (s *PostgresDatastoreTestSuite) TearDownSuite() {
@@ -88,8 +50,8 @@ func (s *PostgresDatastoreTestSuite) TearDownSuite() {
 			log.Printf("Error closing datastore: %v", err)
 		}
 	}
-	if s.pgContainer != nil {
-		err := s.pgContainer.Terminate(ctx)
+	if s.pgHelper != nil {
+		err := s.pgHelper.Terminate(ctx)
 		if err != nil {
 			log.Printf("Error terminating container: %v", err)
 		}
@@ -99,7 +61,7 @@ func (s *PostgresDatastoreTestSuite) TearDownSuite() {
 func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 
 	s.T().Run("successful connection to postgres", func(t *testing.T) {
-		store, err := NewPostgresDatastore(*s.pgConfig)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config)
 		s.store = store
 		require.NoError(s.T(), err, "Should create datastore without error")
 
@@ -125,7 +87,7 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 	})
 
 	s.T().Run("set maxConnection when it is configured", func(t *testing.T) {
-		cfg := *s.pgConfig
+		cfg := *s.pgHelper.Config
 		cfg.MaxConnections = 5
 		store, err := NewPostgresDatastore(cfg)
 		s.store = store
@@ -152,7 +114,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 			"error_message":       {"text", "YES"},
 		}
 
-		store, err := NewPostgresDatastore(*s.pgConfig)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
 
@@ -169,7 +131,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	})
 
 	s.T().Run("verifies primary key constraint on id column", func(t *testing.T) {
-		store, err := NewPostgresDatastore(*s.pgConfig)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
 
@@ -183,7 +145,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		defer func() { migrationsPath = oldPath }()
 		migrationsPath = "/non/existent/path"
 
-		_, err := NewPostgresDatastore(*s.pgConfig)
+		_, err := NewPostgresDatastore(*s.pgHelper.Config)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "could not create migrate instance with source")
@@ -194,7 +156,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		defer func() { migrationsPath = oldPath }()
 		migrationsPath = t.TempDir()
 
-		_, err := NewPostgresDatastore(*s.pgConfig)
+		_, err := NewPostgresDatastore(*s.pgHelper.Config)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to apply migrations")
@@ -208,7 +170,7 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 		defaultHealthCheckPeriod = shortInterval
 		defer func() { defaultHealthCheckPeriod = originalHealthCheckPeriod }()
 
-		config := *s.pgConfig
+		config := *s.pgHelper.Config
 		store, err := NewPostgresDatastore(config)
 		require.NoError(t, err)
 		s.store = store
@@ -217,13 +179,13 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 		time.Sleep(shortInterval * 3)
 
 		ctx := context.Background()
-		err = s.pgContainer.Stop(ctx, &shortInterval)
+		err = s.pgHelper.Stop(ctx, &shortInterval)
 
 		// Wait for a few health check cycles during the outage
 		time.Sleep(shortInterval * 3)
 
 		// Resume the container
-		err = s.pgContainer.Start(ctx)
+		err = s.pgHelper.Start(ctx)
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -234,7 +196,7 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 	})
 
 	s.T().Run("it stops healthcheck when DB is closed", func(t *testing.T) {
-		config := *s.pgConfig
+		config := *s.pgHelper.Config
 		store, err := NewPostgresDatastore(config)
 		s.store = store
 		require.NoError(t, err, "Should create datastore without error")
