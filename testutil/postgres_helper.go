@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -22,11 +23,18 @@ type PostgresHelper struct {
 }
 
 func NewPostgresContainer(t require.TestingT, ctx context.Context) (*PostgresHelper, error) {
+	minPort := 1025
+	maxPort := 65535
+	randomPort := minPort + rand.Intn(maxPort-minPort+1)
+
+	return newPostgresContainerWithFixedPort(t, ctx, fmt.Sprintf("%d", randomPort))
+}
+
+func newPostgresContainerWithFixedPort(t require.TestingT, ctx context.Context, hostPort string) (*PostgresHelper, error) {
 	dbUser := "testuser"
 	dbPassword := "testpassword"
 	dbName := "test_db"
 
-	hostPort := "15432"
 	pgContainer, err := postgres.Run(ctx,
 		"postgres:15-alpine",
 		postgres.WithDatabase(dbName),
