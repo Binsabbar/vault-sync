@@ -2,17 +2,20 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"vault-sync/internal/config"
+	"vault-sync/pkg/db/migrations"
 	"vault-sync/testutil"
 )
 
@@ -25,6 +28,15 @@ type PostgresDatastoreTestSuite struct {
 type testColumn struct {
 	DataType   string
 	IsNullable string
+}
+
+type badMigrationSource struct{}
+
+func (b *badMigrationSource) GetSourceType() string {
+	return "iofs"
+}
+func (b *badMigrationSource) GetSourceDriver() (source.Driver, error) {
+	return nil, fmt.Errorf("failed to create migration source: simulated error")
 }
 
 func TestPostgresDatastoreSuite(t *testing.T) {
@@ -58,10 +70,12 @@ func (s *PostgresDatastoreTestSuite) TearDownSuite() {
 	}
 }
 
+var postgresMigrator = migrations.NewPostgresMigration()
+
 func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 
 	s.T().Run("successful connection to postgres", func(t *testing.T) {
-		store, err := NewPostgresDatastore(*s.pgHelper.Config)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config, postgresMigrator)
 		s.store = store
 		require.NoError(s.T(), err, "Should create datastore without error")
 
@@ -79,7 +93,7 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 			DBName:   "wrongdb",
 		}
 
-		store, err := NewPostgresDatastore(badConfig)
+		store, err := NewPostgresDatastore(badConfig, postgresMigrator)
 
 		assert.Nil(s.T(), store, "Expected store to be nil on connection failure")
 		assert.Error(s.T(), err, "Expected error when connecting to invalid postgres instance")
@@ -89,7 +103,7 @@ func (s *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 	s.T().Run("set maxConnection when it is configured", func(t *testing.T) {
 		cfg := *s.pgHelper.Config
 		cfg.MaxConnections = 5
-		store, err := NewPostgresDatastore(cfg)
+		store, err := NewPostgresDatastore(cfg, postgresMigrator)
 		s.store = store
 		require.NoError(s.T(), err, "Should create datastore without error")
 
@@ -114,7 +128,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 			"error_message":       {"text", "YES"},
 		}
 
-		store, err := NewPostgresDatastore(*s.pgHelper.Config)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config, postgresMigrator)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
 
@@ -131,7 +145,7 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 	})
 
 	s.T().Run("verifies primary key constraint on id column", func(t *testing.T) {
-		store, err := NewPostgresDatastore(*s.pgHelper.Config)
+		store, err := NewPostgresDatastore(*s.pgHelper.Config, postgresMigrator)
 		require.NoError(s.T(), err, "Should create datastore without error")
 		s.store = store
 
@@ -140,27 +154,26 @@ func (s *PostgresDatastoreTestSuite) TestInitSchema_VerifySTableStructure() {
 		assert.Equal(s.T(), []string{"secret_backend", "secret_path", "destination_cluster"}, pkColumns, "PRIMARY KEY should be on 'id'")
 	})
 
-	s.T().Run("returns error if migrate instance creation fails", func(t *testing.T) {
-		oldPath := migrationsPath
-		defer func() { migrationsPath = oldPath }()
-		migrationsPath = "/non/existent/path"
-
-		_, err := NewPostgresDatastore(*s.pgHelper.Config)
-
+	s.T().Run("returns error if migration source is broken", func(t *testing.T) {
+		// Custom migration source that always fails
+		badSource := &badMigrationSource{}
+		_, err := NewPostgresDatastore(*s.pgHelper.Config, badSource)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "could not create migrate instance with source")
+		assert.Contains(t, err.Error(), "failed to create migration source")
 	})
 
 	s.T().Run("returns error if migration fails", func(t *testing.T) {
-		oldPath := migrationsPath
-		defer func() { migrationsPath = oldPath }()
-		migrationsPath = t.TempDir()
+		store, err := NewPostgresDatastore(*s.pgHelper.Config, migrations.NewPostgresMigration())
+		require.NoError(t, err)
+		s.store = store
 
-		_, err := NewPostgresDatastore(*s.pgHelper.Config)
+		s.pgHelper.Stop(context.Background(), nil)
+		defer s.pgHelper.Start(context.Background())
 
+		err = s.store.initSchema()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to apply migrations")
 	})
+
 }
 
 func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
@@ -171,7 +184,7 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 		defer func() { defaultHealthCheckPeriod = originalHealthCheckPeriod }()
 
 		config := *s.pgHelper.Config
-		store, err := NewPostgresDatastore(config)
+		store, err := NewPostgresDatastore(config, postgresMigrator)
 		require.NoError(t, err)
 		s.store = store
 
@@ -197,7 +210,7 @@ func (s *PostgresDatastoreTestSuite) TestHealthCheck() {
 
 	s.T().Run("it stops healthcheck when DB is closed", func(t *testing.T) {
 		config := *s.pgHelper.Config
-		store, err := NewPostgresDatastore(config)
+		store, err := NewPostgresDatastore(config, postgresMigrator)
 		s.store = store
 		require.NoError(t, err, "Should create datastore without error")
 
