@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,9 +12,9 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	psqlmigrator "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 
 	"vault-sync/internal/config"
+	"vault-sync/pkg/db/migrations"
 	"vault-sync/pkg/log"
 )
 
@@ -23,6 +22,7 @@ var defaultHealthCheckPeriod = 1 * time.Minute
 
 type PostgresDatastore struct {
 	DB                  *sqlx.DB
+	migrationSource     migrations.MigrationSource
 	healthCheckInterval *time.Ticker
 	stopHealthCheckCh   chan struct{}
 	healthCheckDone     sync.WaitGroup
@@ -35,9 +35,7 @@ type PostgresConfig struct {
 	ConnMaxIdleTime time.Duration
 }
 
-var migrationsPath = filepath.Join(".", "migrations", "postgres")
-
-func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
+func NewPostgresDatastore(cfg config.Postgres, migrationSource migrations.MigrationSource) (*PostgresDatastore, error) {
 	connectionString := buildPostgresDSN(cfg)
 	redactedConnectionString := redactDSN(connectionString)
 
@@ -62,6 +60,7 @@ func NewPostgresDatastore(cfg config.Postgres) (*PostgresDatastore, error) {
 
 	psqlDB := &PostgresDatastore{
 		DB:                  db,
+		migrationSource:     migrationSource,
 		healthCheckInterval: time.NewTicker(defaultHealthCheckPeriod),
 		stopHealthCheckCh:   make(chan struct{}),
 	}
@@ -99,24 +98,23 @@ func redactDSN(dsnStr string) string {
 }
 
 func (p *PostgresDatastore) initSchema() error {
-	log.Logger.Info().Str("migrations_path", migrationsPath).Msg("Initializing database schema via migrations...")
+	log.Logger.Info().Msg("Initializing database schema via embedded migrations...")
+	migrationSource := p.migrationSource
+	d, err := migrationSource.GetSourceDriver()
+	if err != nil {
+		return err
+	}
+
 	driver, err := psqlmigrator.WithInstance(p.DB.DB, &psqlmigrator.Config{})
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Could not create postgres driver for migrate")
 		return fmt.Errorf("could not create postgres driver for migrate: %w", err)
 	}
 
-	absMigrationsPath, err := filepath.Abs(migrationsPath)
+	m, err := migrate.NewWithInstance(p.migrationSource.GetSourceType(), d, p.DB.DriverName(), driver)
 	if err != nil {
-		log.Logger.Error().Err(err).Str("path", migrationsPath).Msg("Failed to get absolute path for migrations")
-		return fmt.Errorf("failed to get absolute path for migrations at %s: %w", migrationsPath, err)
-	}
-	sourceURL := fmt.Sprintf("file://%s", absMigrationsPath)
-
-	m, err := migrate.NewWithDatabaseInstance(sourceURL, p.DB.DriverName(), driver)
-	if err != nil {
-		log.Logger.Error().Err(err).Str("source_url", sourceURL).Msg("Could not create migrate instance")
-		return fmt.Errorf("could not create migrate instance with source '%s': %w", sourceURL, err)
+		log.Logger.Error().Err(err).Msg("Could not create migrate instance")
+		return fmt.Errorf("could not create migrate instance: %w", err)
 	}
 
 	log.Logger.Info().Msg("Applying migrations...")
