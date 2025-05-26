@@ -8,36 +8,43 @@ import (
 	"vault-sync/pkg/log"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/rs/zerolog"
 )
 
 type PsqlSyncedSecretRepository struct {
-	db postgres.PostgresDatastore
+	psql *postgres.PostgresDatastore
 }
 
-func (p *PsqlSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
-	args := map[string]interface{}{
-		"secret_backend":      backend,
-		"secret_path":         path,
-		"destination_cluster": destinationCluster,
+func NewPsqlSyncedSecretRepository(psql *postgres.PostgresDatastore) *PsqlSyncedSecretRepository {
+	return &PsqlSyncedSecretRepository{
+		psql: psql,
 	}
-	var secret models.SyncedSecret
+}
 
-	err := p.preparedStatements.selectSyncedSecretByPrimaryKey.Get(&secret, args)
+func (repo *PsqlSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
+	var secret models.SyncedSecret
+	query := `SELECT * FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
+
+	err := repo.psql.DB.Get(&secret, query, backend, path, destinationCluster)
 	if err != nil {
-		log.Logger.Error().Err(err).Str("args", fmt.Sprintf("%s,%s,%s", backend, path, destinationCluster)).Msg("Failed to get synced secret")
+		repo.decorateLog(log.Logger.Error, backend, path, destinationCluster).Err(err).Msg("Failed to get synced secret")
 		return nil, fmt.Errorf("failed to get synced secret: %w", err)
 	}
-	log.Logger.Info().Str("args", fmt.Sprintf("%s,%s,%s", backend, path, destinationCluster)).Msg("Successfully retrieved synced secret")
+	repo.decorateLog(log.Logger.Debug, backend, path, destinationCluster).Msg("Successfully retrieved synced secret")
 	return &secret, nil
 }
 
-func (p *PsqlSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecret, error) {
-	var secrets []models.SyncedSecret
-	stmt := p.preparedStatements.selectAllSyncedSecrets
-	err := stmt.Select(&secrets, struct{}{})
+func (repo *PsqlSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecret, error) {
+	var secrets = make([]models.SyncedSecret, 0)
+	query := `SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`
+	err := repo.psql.DB.Select(&secrets, query)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Failed to get all synced secrets")
-		return nil, fmt.Errorf("failed to get all synced secrets: %w", err)
+		return secrets, fmt.Errorf("failed to get all synced secrets: %w", err)
 	}
 	return secrets, nil
+}
+
+func (repo *PsqlSyncedSecretRepository) decorateLog(eventFactory func() *zerolog.Event, backend, path, destinationCluster string) *zerolog.Event {
+	return eventFactory().Str("backend", backend).Str("path", path).Str("destinationCluster", destinationCluster)
 }
