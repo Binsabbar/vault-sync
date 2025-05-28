@@ -40,13 +40,11 @@ jobs:
       - name: Install dependencies
         run: go mod tidy
 
-      - name: Install GoReleaser
+      - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
           version: 2.9.0
-          install-only: true
-
-      - name: Run GoReleaser
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: goreleaser release --clean
+
