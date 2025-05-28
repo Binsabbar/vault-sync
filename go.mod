@@ -3,6 +3,7 @@ module vault-sync
 go 1.23.6
 
 require (
+	github.com/cenkalti/backoff/v5 v5.0.2
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/go-playground/validator/v10 v10.26.0
@@ -10,6 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/rs/zerolog v1.34.0
+	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
