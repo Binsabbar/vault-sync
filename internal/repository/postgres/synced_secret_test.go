@@ -2,11 +2,14 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
+	"github.com/sony/gobreaker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -36,9 +39,9 @@ func (repoTest *SyncedSecretRepositoryTestSuite) SetupSuite() {
 	require.NoError(repoTest.T(), err, "Failed to create Postgres test container")
 
 	psql, err := db.NewPostgresDatastore(*repoTest.pgHelper.Config, migrations.NewPostgresMigration())
-	repo := NewPsqlSyncedSecretRepository(psql)
 	require.NoError(repoTest.T(), err, "Failed to create PsqlSyncedSecretRepository")
-	repoTest.repo = repo
+
+	repoTest.repo = NewPsqlSyncedSecretRepository(psql)
 }
 
 func (repoTest *SyncedSecretRepositoryTestSuite) TearDownSuite() {
@@ -68,7 +71,7 @@ type syncedSecretGetSecretTestCase struct {
 	backend            string
 	path               string
 	destinationCluster string
-	expectError        bool
+	expectedErr        error
 	expectedSecret     *models.SyncedSecret
 }
 
@@ -94,16 +97,16 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			backend:            "kv",
 			path:               "test/path",
 			destinationCluster: "prod",
-			expectError:        false,
+			expectedErr:        nil,
 			expectedSecret:     secretToInsert,
 		},
 		{
-			name:               "return error for non-existent secret",
+			name:               "return error for non existent secret",
 			secretToInsert:     secretToInsert,
 			backend:            "kv",
 			path:               "does/not/exist",
 			destinationCluster: "prod",
-			expectError:        true,
+			expectedErr:        ErrSecretNotFound,
 			expectedSecret:     nil,
 		},
 	}
@@ -115,8 +118,8 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 
 			result, err := repoTest.repo.GetSyncedSecret(tc.backend, tc.path, tc.destinationCluster)
 
-			if tc.expectError {
-				assert.Error(t, err)
+			if tc.expectedErr != nil {
+				assert.ErrorIs(t, err, tc.expectedErr, "Expected error does not match")
 				assert.Nil(t, result)
 			} else {
 				assert.NoError(t, err)
@@ -195,21 +198,137 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 
 	repoTest.T().Run("returns empty slice for no secrets", func(t *testing.T) {
 		repoTest.SetupTest()
+
 		result, err := repoTest.repo.GetSyncedSecrets()
 
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, ErrSecretNotFound, "Expected ErrSecretNotFound error")
 		assert.NotNil(t, result)
 		assert.Len(t, result, 0)
 	})
+}
 
-	repoTest.T().Run("handles database error", func(t *testing.T) {
-		repoTest.SetupTest()
-		repoTest.repo.psql.Close()
-		result, err := repoTest.repo.GetSyncedSecrets()
+func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRetry() {
+	newCircuitBreaker := func() *gobreaker.CircuitBreaker {
+		return gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:        "test_breaker",
+			MaxRequests: 3,
+			Interval:    1 * time.Second,
+			Timeout:     1 * time.Second,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				return counts.TotalFailures >= 2
+			},
+		})
+	}
 
-		assert.Error(t, err, "Failed to get all synced secrets")
-		assert.NotNil(t, result)
+	retryOpsFunc := func() []backoff.RetryOption {
+		strategyOpts := &backoff.ConstantBackOff{Interval: 50 * time.Millisecond}
+		maxRetires := backoff.WithMaxTries(1)
+		return []backoff.RetryOption{backoff.WithBackOff(strategyOpts), maxRetires}
+	}
+
+	repoTest.T().Run("it automatically retry to send the query", func(t *testing.T) {
+		repoTest.repo = &PsqlSyncedSecretRepository{
+			psql:           repoTest.repo.psql,
+			circuitBreaker: newCircuitBreaker(),
+			retryOptFunc:   newBackoffStrategy,
+		}
+		repoTest.insertSecret("kv", "test", "prod")
+
+		// simulate a connection failure
+		repoTest.pgHelper.Stop(context.Background(), nil)
+		go func() {
+			time.Sleep(2 * time.Second)
+			repoTest.pgHelper.Start(context.Background())
+		}()
+
+		result, err := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+
+		assert.NoError(t, err, "Expected to retry and succeed after connection is restored")
+		assert.NotNil(t, result, "Expected to retrieve secret after retry")
 	})
+
+	repoTest.T().Run("it returns error if circuit breaker is open", func(t *testing.T) {
+		repoTest.repo = &PsqlSyncedSecretRepository{
+			psql:           repoTest.repo.psql,
+			circuitBreaker: newCircuitBreaker(),
+			// default retry limits is 10 so the test could take a while to run, hence, we use a shorter timeout
+			// and the retry limit to 1 to speed up the test
+			retryOptFunc: retryOpsFunc,
+		}
+
+		// simulate a connection failure
+		repoTest.pgHelper.Stop(context.Background(), nil)
+
+		_, retryError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError2 := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, circutError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+
+		assert.ErrorIs(t, retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+	})
+
+	repoTest.T().Run("circuit breaker affects GetSyncedSecrets", func(t *testing.T) {
+		repoTest.repo = &PsqlSyncedSecretRepository{
+			psql:           repoTest.repo.psql,
+			circuitBreaker: newCircuitBreaker(),
+			retryOptFunc:   retryOpsFunc,
+		}
+		repoTest.pgHelper.Stop(context.Background(), nil)
+
+		_, retryError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError2 := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, circutError := repoTest.repo.GetSyncedSecrets()
+
+		assert.ErrorIs(t, retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+	})
+
+	repoTest.T().Run("circuit breaker closed after time passes", func(t *testing.T) {
+		repoTest.pgHelper.Start(context.Background())
+		repoTest.SetupTest()
+		repoTest.insertRandomSecrets(5)
+
+		// trigger the circuit breaker to open
+		repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, circutError := repoTest.repo.GetSyncedSecrets()
+		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+
+		var err error
+		var result []models.SyncedSecret
+		assert.Eventually(t, func() bool {
+			result, err = repoTest.repo.GetSyncedSecrets()
+			return err == nil && result != nil
+		}, 5*time.Second, 1*time.Second)
+
+		assert.NoError(t, err, "Circuit breaker did not close after timeout")
+		assert.NotNil(t, result, "Expected to retrieve secret after circuit breaker closed")
+		assert.Len(t, result, 5, "Expected one secret to be returned after circuit breaker closed")
+	})
+}
+
+// test helper functions
+func (repoTest *SyncedSecretRepositoryTestSuite) insertSecret(backend, path, cluster string) {
+	secret := models.SyncedSecret{
+		SecretBackend:      backend,
+		SecretPath:         path,
+		SourceVersion:      1,
+		DestinationCluster: cluster,
+		DestinationVersion: 1,
+		LastSyncAttempt:    time.Now().UTC(),
+		LastSyncSuccess:    nil,
+		Status:             "success",
+		ErrorMessage:       nil,
+	}
+	repoTest.insertTestSecret(secret)
+}
+
+func (repoTest *SyncedSecretRepositoryTestSuite) insertRandomSecrets(count int) {
+	for i := 0; i < count; i++ {
+		repoTest.insertSecret("kv", fmt.Sprintf("test/path/%d", i+1), "prod")
+	}
 }
 
 func (repoTest *SyncedSecretRepositoryTestSuite) insertTestSecret(secret models.SyncedSecret) {
