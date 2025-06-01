@@ -19,7 +19,6 @@ jobs:
   snapshot:
     needs: [test, lint]
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.test.result == 'success' && needs.lint.result == 'success' }}
     permissions:
       contents: write
       packages: write
