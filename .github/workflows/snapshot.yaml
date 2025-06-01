@@ -19,7 +19,7 @@ jobs:
   snapshot:
     needs: [test, lint]
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ always() && needs.test.result == 'success' && needs.lint.result == 'success' }}
     permissions:
       contents: write
       packages: write
