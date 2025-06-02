@@ -196,12 +196,12 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 		assert.Equal(t, "zkv", result[2].SecretBackend)
 	})
 
-	repoTest.T().Run("returns empty slice for no secrets", func(t *testing.T) {
+	repoTest.T().Run("returns empty slice for no secrets without error", func(t *testing.T) {
 		repoTest.SetupTest()
 
 		result, err := repoTest.repo.GetSyncedSecrets()
 
-		assert.ErrorIs(t, err, ErrSecretNotFound, "Expected ErrSecretNotFound error")
+		assert.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Len(t, result, 0)
 	})
