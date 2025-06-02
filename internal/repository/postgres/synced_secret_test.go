@@ -207,6 +207,128 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 	})
 }
 
+type syncedSecretUpdateStatusTestCase struct {
+	name               string
+	secretToInsert     *models.SyncedSecret
+	secretToUpdate     models.SyncedSecret
+	expectedErr        error
+	shouldUpdateFields bool
+}
+
+func (repoTest *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	successTime := now.Add(-1 * time.Minute)
+	errorMsg := "sync failed"
+
+	existingSecret := &models.SyncedSecret{
+		SecretBackend:      "kv",
+		SecretPath:         "test/path",
+		SourceVersion:      1,
+		DestinationCluster: "prod",
+		DestinationVersion: 1,
+		LastSyncAttempt:    now.Add(-2 * time.Minute),
+		LastSyncSuccess:    &successTime,
+		Status:             "success",
+		ErrorMessage:       nil,
+	}
+
+	testCases := []syncedSecretUpdateStatusTestCase{
+		{
+			name:           "insert new secret successfully",
+			secretToInsert: nil,
+			secretToUpdate: models.SyncedSecret{
+				SecretBackend:      "kv",
+				SecretPath:         "new/path",
+				SourceVersion:      1,
+				DestinationCluster: "prod",
+				DestinationVersion: 1,
+				LastSyncAttempt:    now,
+				LastSyncSuccess:    &successTime,
+				Status:             "success",
+				ErrorMessage:       nil,
+			},
+			expectedErr:        nil,
+			shouldUpdateFields: true,
+		},
+		{
+			name:           "update existing secret status to error",
+			secretToInsert: existingSecret,
+			secretToUpdate: models.SyncedSecret{
+				SecretBackend:      "kv",
+				SecretPath:         "test/path",
+				SourceVersion:      2,
+				DestinationCluster: "prod",
+				DestinationVersion: 1,
+				LastSyncAttempt:    now,
+				LastSyncSuccess:    nil,
+				Status:             "error",
+				ErrorMessage:       &errorMsg,
+			},
+			expectedErr:        nil,
+			shouldUpdateFields: true,
+		},
+		{
+			name:           "update existing secret status to success",
+			secretToInsert: existingSecret,
+			secretToUpdate: models.SyncedSecret{
+				SecretBackend:      "kv",
+				SecretPath:         "test/path",
+				SourceVersion:      3,
+				DestinationCluster: "prod",
+				DestinationVersion: 3,
+				LastSyncAttempt:    now,
+				LastSyncSuccess:    &successTime,
+				Status:             "success",
+				ErrorMessage:       nil,
+			},
+			expectedErr:        nil,
+			shouldUpdateFields: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		repoTest.T().Run(tc.name, func(t *testing.T) {
+			repoTest.SetupTest()
+
+			if tc.secretToInsert != nil {
+				repoTest.insertTestSecret(*tc.secretToInsert)
+			}
+
+			err := repoTest.repo.UpdateSyncedSecretStatus(tc.secretToUpdate)
+
+			if tc.expectedErr != nil {
+				assert.ErrorIs(t, err, tc.expectedErr, "Expected error does not match")
+			} else {
+				assert.NoError(t, err, "Expected no error")
+
+				if tc.shouldUpdateFields {
+					result, err := repoTest.repo.GetSyncedSecret(
+						tc.secretToUpdate.SecretBackend,
+						tc.secretToUpdate.SecretPath,
+						tc.secretToUpdate.DestinationCluster,
+					)
+					require.NoError(t, err, "Failed to retrieve updated secret")
+
+					assert.Equal(t, tc.secretToUpdate.SecretBackend, result.SecretBackend)
+					assert.Equal(t, tc.secretToUpdate.SecretPath, result.SecretPath)
+					assert.Equal(t, tc.secretToUpdate.SourceVersion, result.SourceVersion)
+					assert.Equal(t, tc.secretToUpdate.DestinationCluster, result.DestinationCluster)
+					assert.Equal(t, tc.secretToUpdate.DestinationVersion, result.DestinationVersion)
+					assert.Equal(t, tc.secretToUpdate.Status, result.Status)
+					assert.WithinDuration(t, tc.secretToUpdate.LastSyncAttempt, result.LastSyncAttempt, time.Second)
+
+					if tc.secretToUpdate.LastSyncSuccess != nil {
+						assert.WithinDuration(t, *tc.secretToUpdate.LastSyncSuccess, *result.LastSyncSuccess, time.Second)
+					}
+					if tc.secretToUpdate.ErrorMessage != nil {
+						assert.Equal(t, *tc.secretToUpdate.ErrorMessage, *result.ErrorMessage)
+					}
+				}
+			}
+		})
+	}
+}
+
 func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRetry() {
 	newCircuitBreaker := func() *gobreaker.CircuitBreaker {
 		return gobreaker.NewCircuitBreaker(gobreaker.Settings{
@@ -306,6 +428,69 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAn
 		assert.NoError(t, err, "Circuit breaker did not close after timeout")
 		assert.NotNil(t, result, "Expected to retrieve secret after circuit breaker closed")
 		assert.Len(t, result, 5, "Expected one secret to be returned after circuit breaker closed")
+	})
+
+	repoTest.T().Run("circuit breaker opens on update failures", func(t *testing.T) {
+		repoTest.repo = &PostgreSQLSyncedSecretRepository{
+			psql:           repoTest.repo.psql,
+			circuitBreaker: newCircuitBreaker(),
+			retryOptFunc:   retryOpsFunc,
+		}
+
+		secret := models.SyncedSecret{
+			SecretBackend:      "kv",
+			SecretPath:         "test/path",
+			SourceVersion:      1,
+			DestinationCluster: "prod",
+			DestinationVersion: 1,
+			LastSyncAttempt:    time.Now().UTC(),
+			LastSyncSuccess:    nil,
+			Status:             "success",
+			ErrorMessage:       nil,
+		}
+
+		// simulate a connection failure
+		repoTest.pgHelper.Stop(context.Background(), nil)
+
+		retryError1 := repoTest.repo.UpdateSyncedSecretStatus(secret)
+		retryError2 := repoTest.repo.UpdateSyncedSecretStatus(secret)
+		circuitError := repoTest.repo.UpdateSyncedSecretStatus(secret)
+
+		assert.ErrorIs(t, retryError1, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		assert.ErrorIs(t, circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+	})
+
+	repoTest.T().Run("circuit breaker recovers after connection restored", func(t *testing.T) {
+		repoTest.pgHelper.Start(context.Background())
+		repoTest.SetupTest()
+
+		secret := models.SyncedSecret{
+			SecretBackend:      "kv",
+			SecretPath:         "test/recovery",
+			SourceVersion:      1,
+			DestinationCluster: "prod",
+			DestinationVersion: 1,
+			LastSyncAttempt:    time.Now().UTC(),
+			LastSyncSuccess:    nil,
+			Status:             "success",
+			ErrorMessage:       nil,
+		}
+
+		circuitError := repoTest.repo.UpdateSyncedSecretStatus(secret)
+		assert.ErrorIs(t, circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+
+		var err error
+		assert.Eventually(t, func() bool {
+			err = repoTest.repo.UpdateSyncedSecretStatus(secret)
+			return err == nil
+		}, 5*time.Second, 1*time.Second)
+
+		assert.NoError(t, err, "Circuit breaker did not close after timeout")
+
+		result, err := repoTest.repo.GetSyncedSecret("kv", "test/recovery", "prod")
+		assert.NoError(t, err, "Failed to retrieve updated secret")
+		assert.Equal(t, "success", result.Status.String(), "Expected secret status to be 'success'")
 	})
 }
 
