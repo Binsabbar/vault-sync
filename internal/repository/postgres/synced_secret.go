@@ -107,6 +107,60 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.Synce
 	return secrets, nil
 }
 
+func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret models.SyncedSecret) error {
+	dbOperation := func() (any, error) {
+		query := `
+            INSERT INTO synced_secrets (
+                secret_backend,
+                secret_path,
+                source_version,
+                destination_cluster,
+                destination_version,
+                last_sync_attempt,
+                last_sync_success,
+                status,
+                error_message
+            ) VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
+            ON CONFLICT (secret_backend, secret_path, destination_cluster)
+            DO UPDATE SET
+                source_version = EXCLUDED.source_version,
+                destination_version = EXCLUDED.destination_version,
+                last_sync_attempt = EXCLUDED.last_sync_attempt,
+                last_sync_success = EXCLUDED.last_sync_success,
+                status = EXCLUDED.status,
+                error_message = EXCLUDED.error_message
+        `
+
+		result, err := repo.psql.DB.NamedExec(query, secret)
+		if err != nil {
+			repo.decorateLog(log.Logger.Error, secret.SecretBackend, secret.SecretPath, secret.DestinationCluster).
+				Err(err).Msg("error occurred while updating synced secret status")
+			return nil, fmt.Errorf("error occurred while updating synced secret status: %w", err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			repo.decorateLog(log.Logger.Error, secret.SecretBackend, secret.SecretPath, secret.DestinationCluster).
+				Err(err).Msg("error occurred while checking rows affected")
+			return nil, fmt.Errorf("error occurred while checking rows affected: %w", err)
+		}
+
+		repo.decorateLog(log.Logger.Debug, secret.SecretBackend, secret.SecretPath, secret.DestinationCluster).
+			Int64("rows_affected", rowsAffected).Msg("Successfully updated synced secret status")
+		return &secret, nil
+	}
+
+	_, err := executeOperationInCircuitBreaker[*models.SyncedSecret](repo, dbOperation)
+	return err
+}
+
+func (repo *PostgreSQLSyncedSecretRepository) Close() error {
+	if repo.psql != nil {
+		return repo.psql.Close()
+	}
+	return nil
+}
+
 func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, operation func() (any, error)) (T, error) {
 	var opsResult T
 
