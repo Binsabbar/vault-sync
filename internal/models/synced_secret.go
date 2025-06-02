@@ -21,3 +21,7 @@ type SyncedSecret struct {
 	Status             SyncStatus `db:"status"`
 	ErrorMessage       *string    `db:"error_message"`
 }
+
+func (s SyncStatus) String() string {
+	return string(s)
+}
