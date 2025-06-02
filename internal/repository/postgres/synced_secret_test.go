@@ -23,7 +23,7 @@ import (
 type SyncedSecretRepositoryTestSuite struct {
 	suite.Suite
 	pgHelper *testutil.PostgresHelper
-	repo     *PsqlSyncedSecretRepository
+	repo     *PostgreSQLSyncedSecretRepository
 }
 
 func TestSyncedSecretRepositorySuite(t *testing.T) {
@@ -39,9 +39,9 @@ func (repoTest *SyncedSecretRepositoryTestSuite) SetupSuite() {
 	require.NoError(repoTest.T(), err, "Failed to create Postgres test container")
 
 	psql, err := db.NewPostgresDatastore(*repoTest.pgHelper.Config, migrations.NewPostgresMigration())
-	require.NoError(repoTest.T(), err, "Failed to create PsqlSyncedSecretRepository")
+	require.NoError(repoTest.T(), err, "Failed to create PostgreSQLSyncedSecretRepository")
 
-	repoTest.repo = NewPsqlSyncedSecretRepository(psql)
+	repoTest.repo = NewPostgreSQLSyncedSecretRepository(psql)
 }
 
 func (repoTest *SyncedSecretRepositoryTestSuite) TearDownSuite() {
@@ -227,7 +227,7 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAn
 	}
 
 	repoTest.T().Run("it automatically retry to send the query", func(t *testing.T) {
-		repoTest.repo = &PsqlSyncedSecretRepository{
+		repoTest.repo = &PostgreSQLSyncedSecretRepository{
 			psql:           repoTest.repo.psql,
 			circuitBreaker: newCircuitBreaker(),
 			retryOptFunc:   newBackoffStrategy,
@@ -248,7 +248,7 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAn
 	})
 
 	repoTest.T().Run("it returns error if circuit breaker is open", func(t *testing.T) {
-		repoTest.repo = &PsqlSyncedSecretRepository{
+		repoTest.repo = &PostgreSQLSyncedSecretRepository{
 			psql:           repoTest.repo.psql,
 			circuitBreaker: newCircuitBreaker(),
 			// default retry limits is 10 so the test could take a while to run, hence, we use a shorter timeout
@@ -269,7 +269,7 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAn
 	})
 
 	repoTest.T().Run("circuit breaker affects GetSyncedSecrets", func(t *testing.T) {
-		repoTest.repo = &PsqlSyncedSecretRepository{
+		repoTest.repo = &PostgreSQLSyncedSecretRepository{
 			psql:           repoTest.repo.psql,
 			circuitBreaker: newCircuitBreaker(),
 			retryOptFunc:   retryOpsFunc,

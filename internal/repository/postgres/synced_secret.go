@@ -24,7 +24,7 @@ var (
 	ErrDatabaseGeneric     = errors.New("database error occurred while processing request")
 )
 
-type PsqlSyncedSecretRepository struct {
+type PostgreSQLSyncedSecretRepository struct {
 	psql           *postgres.PostgresDatastore
 	circuitBreaker *gobreaker.CircuitBreaker
 	retryOptFunc   func() []backoff.RetryOption
@@ -34,7 +34,7 @@ type SyncedSecretResult interface {
 	*models.SyncedSecret | []models.SyncedSecret
 }
 
-func NewPsqlSyncedSecretRepository(psql *postgres.PostgresDatastore) *PsqlSyncedSecretRepository {
+func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *PostgreSQLSyncedSecretRepository {
 	gobreakerSettings := gobreaker.Settings{
 		Name:        "synced_secret_db",
 		MaxRequests: 5,                // Allow 5 test requests in half-open state
@@ -53,14 +53,14 @@ func NewPsqlSyncedSecretRepository(psql *postgres.PostgresDatastore) *PsqlSynced
 		},
 	}
 
-	return &PsqlSyncedSecretRepository{
+	return &PostgreSQLSyncedSecretRepository{
 		psql:           psql,
 		circuitBreaker: gobreaker.NewCircuitBreaker(gobreakerSettings),
 		retryOptFunc:   newBackoffStrategy,
 	}
 }
 
-func (repo *PsqlSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
+func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
 	dbOperation := func() (any, error) {
 		var secret models.SyncedSecret
 		query := `SELECT * FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
@@ -86,7 +86,7 @@ func (repo *PsqlSyncedSecretRepository) GetSyncedSecret(backend, path, destinati
 	return secret, nil
 }
 
-func (repo *PsqlSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecret, error) {
+func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecret, error) {
 	dbOperation := func() (any, error) {
 		var secrets = make([]models.SyncedSecret, 0)
 		query := `SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`
@@ -107,7 +107,7 @@ func (repo *PsqlSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecre
 	return secrets, nil
 }
 
-func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PsqlSyncedSecretRepository, operation func() (any, error)) (T, error) {
+func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, operation func() (any, error)) (T, error) {
 	var opsResult T
 
 	result, err := repo.circuitBreaker.Execute(func() (any, error) {
@@ -130,7 +130,7 @@ func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PsqlSyncedSecr
 	return typedResult, nil
 }
 
-func (repo *PsqlSyncedSecretRepository) handleCircuitBreakerError(err error) error {
+func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -146,7 +146,7 @@ func (repo *PsqlSyncedSecretRepository) handleCircuitBreakerError(err error) err
 	}
 }
 
-func (repo *PsqlSyncedSecretRepository) decorateLog(eventFactory func() *zerolog.Event, backend, path, destinationCluster string) *zerolog.Event {
+func (repo *PostgreSQLSyncedSecretRepository) decorateLog(eventFactory func() *zerolog.Event, backend, path, destinationCluster string) *zerolog.Event {
 	return eventFactory().Str("backend", backend).Str("path", path).Str("destinationCluster", destinationCluster)
 }
 
