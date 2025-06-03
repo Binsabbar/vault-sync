@@ -3,7 +3,6 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"time"
 
@@ -23,9 +22,11 @@ type PostgresHelper struct {
 }
 
 func NewPostgresContainer(t require.TestingT, ctx context.Context) (*PostgresHelper, error) {
-	minPort := 1025
-	maxPort := 65535
-	randomPort := minPort + rand.Intn(maxPort-minPort+1)
+	pm := getPortManager()
+	randomPort, err := pm.reservePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to reserve port: %w", err)
+	}
 
 	return newPostgresContainerWithFixedPort(t, ctx, fmt.Sprintf("%d", randomPort))
 }
