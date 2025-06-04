@@ -37,6 +37,7 @@ type MainCluster struct {
 	Address          string   `mapstructure:"address" validate:"required,url"`
 	AppRole          string   `mapstructure:"app_role" validate:"required"`
 	AppSecret        string   `mapstructure:"app_secret" validate:"required"`
+	AppRoleMount     string   `mapstructure:"app_role_mount"`
 	TLSSkipVerify    bool     `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile      string   `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
 	PathsToReplicate []string `mapstructure:"paths_to_replicate" validate:"unique"`
@@ -46,8 +47,18 @@ type MainCluster struct {
 type ReplicaCluster struct {
 	Name          string `mapstructure:"name" validate:"required"`
 	Address       string `mapstructure:"address" validate:"required,url"`
-	AppRole       string `mapstructure:"app_role" validate:"required" `
-	AppSecret     string `mapstructure:"app_secret"  validate:"required"`
+	AppRole       string `mapstructure:"app_role" validate:"required"`
+	AppSecret     string `mapstructure:"app_secret" validate:"required"`
+	AppRoleMount  string `mapstructure:"app_role_mount"`
+	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
+	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
+}
+
+type VaultConfig struct {
+	Address       string `mapstructure:"address" validate:"required,url"`
+	AppRole       string `mapstructure:"app_role" validate:"required"`
+	AppSecret     string `mapstructure:"app_secret" validate:"required"`
+	AppRoleMount  string `mapstructure:"app_role_mount"`
 	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
 }
@@ -56,7 +67,6 @@ var validate = validator.New()
 
 func init() {
 	validate.RegisterStructValidation(MainClusterValidation, MainCluster{})
-	validate.RegisterStructValidation(ReplicaClusterValidation, ReplicaCluster{})
 }
 
 func MainClusterValidation(sl validator.StructLevel) {
@@ -74,23 +84,23 @@ func MainClusterValidation(sl validator.StructLevel) {
 			break
 		}
 	}
-	if !cluster.TLSSkipVerify && cluster.TLSCertFile == "" {
-		sl.ReportError(cluster.TLSCertFile, "TLSCertFile", "tls_cert_file", "required", "")
-	}
-}
-
-func ReplicaClusterValidation(sl validator.StructLevel) {
-	cluster := sl.Current().Interface().(ReplicaCluster)
-
-	if !cluster.TLSSkipVerify && cluster.TLSCertFile == "" {
-		sl.ReportError(cluster.TLSCertFile, "TLSCertFile", "tls_cert_file", "required", "")
-	}
 }
 
 func NewConfig() (*Config, error) {
 	var cfg Config
+	viper.SetDefault("log_level", "info")
+	viper.SetDefault("postgres.ssl_mode", "disable")
+	viper.SetDefault("vault.main_cluster.app_role_mount", "approle")
+
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	for index, r := range cfg.Vault.ReplicaClusters {
+		if r.AppRoleMount == "" {
+			r.AppRoleMount = "approle"
+		}
+		cfg.Vault.ReplicaClusters[index] = r
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -98,6 +108,28 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func (c *MainCluster) MapToVaultConfig() VaultConfig {
+	return VaultConfig{
+		Address:       c.Address,
+		AppRole:       c.AppRole,
+		AppSecret:     c.AppSecret,
+		AppRoleMount:  c.AppRoleMount,
+		TLSSkipVerify: c.TLSSkipVerify,
+		TLSCertFile:   c.TLSCertFile,
+	}
+}
+
+func (c *ReplicaCluster) MapToVaultConfig() VaultConfig {
+	return VaultConfig{
+		Address:       c.Address,
+		AppRole:       c.AppRole,
+		AppSecret:     c.AppSecret,
+		AppRoleMount:  c.AppRoleMount,
+		TLSSkipVerify: c.TLSSkipVerify,
+		TLSCertFile:   c.TLSCertFile,
+	}
 }
 
 func validateConfig(cfg Config) error {
@@ -134,8 +166,6 @@ func validateConfig(cfg Config) error {
 			msg = fmt.Sprintf("%s must have at least %s items/characters", namespace, param)
 		case "oneof":
 			msg = fmt.Sprintf("%s must be one of [%s]", namespace, param)
-		case "boolean":
-			msg = fmt.Sprintf("%s must be a boolean (true or false)", namespace)
 		case "filepath":
 			msg = fmt.Sprintf("%s must be a valid file path", namespace)
 		case "no_overlap":
