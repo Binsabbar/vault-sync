@@ -33,6 +33,8 @@ vault:
     app_role: my_app_role
     # app_secret is the secret ID used to authenticate with the main cluster
     app_secret: my_app_secret
+    # app_role_mount is the mount point for the AppRole authentication method
+    app_role_mount: approle
     # paths_to_replicate is a list of paths to replicate from the main cluster
     paths_to_replicate:
       - secret/data/test
@@ -48,9 +50,11 @@ vault:
       tls_cert_file: /path/to/cert-2.pem
       app_role: my_app_role_replica_2
       app_secret: my_app_secret_replica_2
+      app_role_mount: approle2
     - name: replica-3
       address: http://vault-replica-3:8200
       tls_skip_verify: true
       tls_cert_file: /path/to/cert-3.pem
       app_role: my_app_role_replica_3
       app_secret: my_app_secret_replica_3
+      app_role_mount: approle3
