@@ -7,14 +7,16 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/vault"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"vault-sync/pkg/log"
 )
 
 type VaultClustersHelper struct {
@@ -103,6 +105,7 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 		Token:       root_token,
 	}
 
+	log.Logger.Info().Str("address", vaultConfig.Address).Msg("Vault container started")
 	return &VaultHelper{
 		container: vaultContainer,
 		Config:    vaultConfig,
@@ -133,91 +136,106 @@ func (v *VaultHelper) Start(ctx context.Context) error {
 
 // Vault Operations
 func (v *VaultHelper) EnableAppRoleAuth(ctx context.Context) error {
-	if err := v.executeVaultCommand(ctx, "vault auth enable approle"); err != nil {
+	if _, err := v.ExecuteVaultCommand(ctx, "vault auth enable approle"); err != nil {
 		return fmt.Errorf("failed to enable AppRole auth: %w", err)
 	}
 	return nil
 }
 
+func (v *VaultHelper) GetAppRoleID(ctx context.Context, approle string) (string, error) {
+	cmd := fmt.Sprintf("vault read -field=role_id auth/approle/role/%s/role-id", approle)
+	output, err := v.ExecuteVaultCommand(ctx, cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to read AppRole ID: %w", err)
+	}
+	return output, nil
+}
+
 func (v *VaultHelper) GetAppSecret(ctx context.Context, approle string) (string, error) {
 	cmd := fmt.Sprintf("vault write -force -field=secret_id auth/approle/role/%s/secret-id", approle)
-	_, output, err := v.container.Exec(ctx, []string{"sh", "-c", cmd})
+	output, err := v.ExecuteVaultCommand(ctx, cmd)
 	if err != nil {
 		return "", fmt.Errorf("failed to read AppRole secret: %w", err)
 	}
-	byteOutput, _ := io.ReadAll(output)
-	return strings.TrimSpace(cleanOutput(string(byteOutput))), nil
+	return output, nil
 }
 
 func (v *VaultHelper) EnableKVv2Mounts(ctx context.Context, mounts ...string) error {
 	for _, mount := range mounts {
 		cmd := fmt.Sprintf("vault secrets enable -path=%s -version=2 kv", mount)
-		if err := v.executeVaultCommand(ctx, cmd); err != nil {
+		if _, err := v.ExecuteVaultCommand(ctx, cmd); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, approle string, mounts ...string) error {
+func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, approle string, mounts ...string) (string, string, error) {
 	for _, mount := range mounts {
-		policy := fmt.Sprintf(`
-	path "sys/mounts" {
-  	capabilities = ["read", "list"]
-	}
-	path "sys/mounts/*" {
-		capabilities = ["read", "list"]
-	}
-	path "%s/data/*" { 
-		capabilities = ["read", "list"] 
-	}
-	path "%s/metadata/*" { 
-		capabilities = ["read", "list"] 
-	}
-	`, mount, mount)
-
-		if err := v.executeVaultCommand(ctx, fmt.Sprintf("vault policy write readonly-%s -<<EOF\n%s\nEOF", mount, formatEoFInput(policy))); err != nil {
-			return err
+		policyPaths := []string{
+			`path "auth/approle/login" { capabilities = ["create"] }`,
+			`path "sys/mounts" { capabilities = ["read", "list"] }`,
+			`path "sys/mounts/*" { capabilities = ["read", "list"] }`,
 		}
-
-		if err := v.createAppRole(ctx, approle, []string{fmt.Sprintf("readonly-%s", mount)}); err != nil {
-			return err
+		for _, mount := range mounts {
+			policyPaths = append(policyPaths,
+				fmt.Sprintf(`path "%s/data/*" { capabilities = ["read", "list"] }`, mount),
+				fmt.Sprintf(`path "%s/metadata/*" { capabilities = ["read", "list"] }`, mount),
+			)
+		}
+		policy := strings.Join(policyPaths, "\n")
+		if _, err := v.ExecuteVaultCommand(ctx, fmt.Sprintf("vault policy write readwrite-%s -<<EOF\n%s\nEOF", mount, policy)); err != nil {
+			return "", "", err
+		}
+		if _, err := v.createAppRole(ctx, approle, []string{fmt.Sprintf("readwrite-%s", mount)}); err != nil {
+			return "", "", err
 		}
 	}
-	return nil
+
+	return v.getAppRoleIDAndSecret(ctx, approle)
 }
 
-func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) error {
+func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) (string, string, error) {
 	for _, mount := range mounts {
-		policy := fmt.Sprintf(`
-	path "sys/mounts" {
-  	capabilities = ["read", "list"]
-	}
-	path "sys/mounts/*" {
-		capabilities = ["read", "list"]
-	}
-	path "%s/data/*" { 
-		capabilities = ["create", "update", "read", "list"] 
-	}
-	path "%s/metadata/*" { 
-		capabilities = ["create", "update", "read", "list"] 
-	}
-	`, mount, mount)
-
-		if err := v.executeVaultCommand(ctx, fmt.Sprintf("vault policy write readwrite-%s -<<EOF\n%s\nEOF", mount, formatEoFInput(policy))); err != nil {
-			return err
+		policyPaths := []string{
+			`path "auth/approle/login" { capabilities = ["create"] }`,
+			`path "sys/mounts" { capabilities = ["read", "list"] }`,
+			`path "sys/mounts/*" { capabilities = ["read", "list"] }`,
 		}
-		v.executeVaultCommand(ctx, "vault policy list")
-		if err := v.createAppRole(ctx, approle, []string{fmt.Sprintf("readwrite-%s", mount)}); err != nil {
-			return err
+		for _, mount := range mounts {
+			policyPaths = append(policyPaths,
+				fmt.Sprintf(`path "%s/data/*" { capabilities = ["create", "update", "read", "list"]  }`, mount),
+				fmt.Sprintf(`path "%s/metadata/*" { capabilities = ["create", "update", "read", "list"]  }`, mount),
+			)
+		}
+		policy := strings.Join(policyPaths, "\n")
+		if _, err := v.ExecuteVaultCommand(ctx, fmt.Sprintf("vault policy write readwrite-%s -<<EOF\n%s\nEOF", mount, policy)); err != nil {
+			return "", "", err
+		}
+		if _, err := v.createAppRole(ctx, approle, []string{fmt.Sprintf("readwrite-%s", mount)}); err != nil {
+			return "", "", err
 		}
 	}
-	return nil
+	return v.getAppRoleIDAndSecret(ctx, approle)
 }
 
-func (v *VaultHelper) WriteSecret(ctx context.Context, mount, path string, data map[string]string) error {
+func (v *VaultHelper) WriteSecret(ctx context.Context, mount, path string, data map[string]string) (string, error) {
 	cmd := fmt.Sprintf("vault kv put %s/%s %s", mount, path, formatDataForVault(data))
-	return v.executeVaultCommand(ctx, cmd)
+	return v.ExecuteVaultCommand(ctx, cmd)
+}
+
+func (v *VaultHelper) ExecuteVaultCommand(ctx context.Context, command string) (string, error) {
+	_, output, err := v.container.Exec(ctx, []string{"sh", "-c", command}, exec.Multiplexed())
+	if err != nil {
+		return "", fmt.Errorf("failed to execute command %q in Vault container: %w", command, err)
+	}
+
+	byteOutput, _ := io.ReadAll(output)
+	if os.Getenv("DEBUG_TESTCONTAINERS") != "" {
+		log.Logger.Info().Str("command", command).Msg("Executing Vault command")
+		log.Logger.Info().Str("output", string(byteOutput)).Msg("Vault command output")
+	}
+	return string(byteOutput), nil
 }
 
 func formatDataForVault(data map[string]string) string {
@@ -228,34 +246,19 @@ func formatDataForVault(data map[string]string) string {
 	return strings.Join(formatted, " ")
 }
 
-func (v *VaultHelper) executeVaultCommand(ctx context.Context, command string) error {
-	_, output, err := v.container.Exec(ctx, []string{"sh", "-c", command})
-	if err != nil {
-		return fmt.Errorf("failed to execute command %q in Vault container: %w", command, err)
-	}
-	if os.Getenv("DEBUG_TESTCONTAINERS") != "" {
-		fmt.Println("Executing Vault command:", command)
-		byteOutput, _ := io.ReadAll(output)
-		fmt.Println("Vault command output:", string(byteOutput))
-	}
-	return nil
-}
-
-func (v *VaultHelper) createAppRole(ctx context.Context, roleName string, policies []string) error {
+func (v *VaultHelper) createAppRole(ctx context.Context, roleName string, policies []string) (string, error) {
 	cmd := fmt.Sprintf("vault write auth/approle/role/%s policies=%s", roleName, strings.Join(policies, ","))
-	return v.executeVaultCommand(ctx, cmd)
+	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
-func formatEoFInput(input string) string {
-	return input
-	// return strings.ReplaceAll(input, "\n", "\\n")
-}
-
-func cleanOutput(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsPrint(r) || r == '\n' || r == '\r' {
-			return r
-		}
-		return -1
-	}, s)
+func (v *VaultHelper) getAppRoleIDAndSecret(ctx context.Context, approle string) (string, string, error) {
+	role_id, err := v.GetAppRoleID(ctx, approle)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get AppRole ID: %w", err)
+	}
+	role_secret, err := v.GetAppSecret(ctx, approle)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get AppRole secret: %w", err)
+	}
+	return role_id, role_secret, nil
 }
