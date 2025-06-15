@@ -29,8 +29,8 @@ var validAppConfig = configFields{
 	"postgres.db_name":                   "d",
 	"postgres.max_connection":            "10",
 	"vault.main_cluster.address":         "http://vault:8200",
-	"vault.main_cluster.app_role":        "r",
-	"vault.main_cluster.app_secret":      "s",
+	"vault.main_cluster.app_role_id":     "r",
+	"vault.main_cluster.app_role_secret": "s",
 	"vault.main_cluster.app_role_mount":  "s",
 	"vault.main_cluster.tls_skip_verify": "true",
 	"vault.replica_clusters":             []configFields{validVaultReplicaClusterConfig},
@@ -39,8 +39,8 @@ var validAppConfig = configFields{
 var validVaultReplicaClusterConfig = configFields{
 	"name":            "r2",
 	"address":         "http://vault-replica-2:8200",
-	"app_role":        "r",
-	"app_secret":      "s",
+	"app_role_id":     "r",
+	"app_role_secret": "s",
 	"app_role_mount":  "s",
 	"tls_skip_verify": "true",
 }
@@ -87,8 +87,8 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.Equal(t, "http://vault:8200", cfg.Vault.MainCluster.Address)
 	require.True(t, cfg.Vault.MainCluster.TLSSkipVerify)
 	require.Equal(t, "/path/to/cert.pem", cfg.Vault.MainCluster.TLSCertFile)
-	require.Equal(t, "my_app_role", cfg.Vault.MainCluster.AppRole)
-	require.Equal(t, "my_app_secret", cfg.Vault.MainCluster.AppSecret)
+	require.Equal(t, "my_app_role", cfg.Vault.MainCluster.AppRoleID)
+	require.Equal(t, "my_app_secret", cfg.Vault.MainCluster.AppRoleSecret)
 	require.Equal(t, "approle", cfg.Vault.MainCluster.AppRoleMount)
 	require.ElementsMatch(t, []string{"secret/data/test", "secret/data/test2"}, cfg.Vault.MainCluster.PathsToReplicate)
 	require.ElementsMatch(t, []string{"secret/data/test3", "secret/data/test4"}, cfg.Vault.MainCluster.PathsToIgnore)
@@ -101,8 +101,8 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.True(t, replica2.TLSSkipVerify)
 	require.Equal(t, "/path/to/cert-2.pem", replica2.TLSCertFile)
 	require.Equal(t, "http://vault-replica-2:8200", replica2.Address)
-	require.Equal(t, "my_app_role_replica_2", replica2.AppRole)
-	require.Equal(t, "my_app_secret_replica_2", replica2.AppSecret)
+	require.Equal(t, "my_app_role_replica_2", replica2.AppRoleID)
+	require.Equal(t, "my_app_secret_replica_2", replica2.AppRoleSecret)
 	require.Equal(t, "approle2", replica2.AppRoleMount)
 
 	replica3 := cfg.Vault.ReplicaClusters[1]
@@ -110,8 +110,8 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.True(t, replica3.TLSSkipVerify)
 	require.Equal(t, "/path/to/cert-3.pem", replica3.TLSCertFile)
 	require.Equal(t, "http://vault-replica-3:8200", replica3.Address)
-	require.Equal(t, "my_app_role_replica_3", replica3.AppRole)
-	require.Equal(t, "my_app_secret_replica_3", replica3.AppSecret)
+	require.Equal(t, "my_app_role_replica_3", replica3.AppRoleID)
+	require.Equal(t, "my_app_secret_replica_3", replica3.AppRoleSecret)
 	require.Equal(t, "approle3", replica3.AppRoleMount)
 }
 
@@ -229,14 +229,14 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.MainCluster.Address must be a valid URL",
 			},
 			{
-				name:        "missing vault.main_cluster.app_role",
-				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_role"),
-				errContains: "Config.Vault.MainCluster.AppRole is required",
+				name:        "missing vault.main_cluster.app_role_id",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_role_id"),
+				errContains: "Config.Vault.MainCluster.AppRoleID is required",
 			},
 			{
-				name:        "missing vault.main_cluster.app_secret",
-				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_secret"),
-				errContains: "Config.Vault.MainCluster.AppSecret is required",
+				name:        "missing vault.main_cluster.app_role_secret",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.app_role_secret"),
+				errContains: "Config.Vault.MainCluster.AppRoleSecret is required",
 			},
 			{
 				name:        "invalid vault.main_cluster.tls_skip_verify",
@@ -287,14 +287,14 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.ReplicaClusters[0].Address must be a valid URL",
 			},
 			{
-				name:        "missing vault.replica_cluster.app_role",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role")),
-				errContains: "Config.Vault.ReplicaClusters[0].AppRole is required",
+				name:        "missing vault.replica_cluster.app_role_id",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role_id")),
+				errContains: "Config.Vault.ReplicaClusters[0].AppRoleID is required",
 			},
 			{
-				name:        "missing vault.replica_cluster.app_secret",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_secret")),
-				errContains: "Config.Vault.ReplicaClusters[0].AppSecret is required",
+				name:        "missing vault.replica_cluster.app_role_secret",
+				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role_secret")),
+				errContains: "Config.Vault.ReplicaClusters[0].AppRoleSecret is required",
 			},
 			{
 				name:        "invalid vault.replica_cluster.tls_cert_file",
@@ -346,8 +346,8 @@ func TestConfigurationValidation(t *testing.T) {
 func TestMainCluster_MapToVaultConfig(t *testing.T) {
 	main := MainCluster{
 		Address:          "http://vault:8200",
-		AppRole:          "role",
-		AppSecret:        "secret",
+		AppRoleID:        "role",
+		AppRoleSecret:    "secret",
 		AppRoleMount:     "approle-team1",
 		TLSSkipVerify:    true,
 		TLSCertFile:      "/path/to/cert.pem",
@@ -357,8 +357,8 @@ func TestMainCluster_MapToVaultConfig(t *testing.T) {
 
 	want := VaultConfig{
 		Address:       main.Address,
-		AppRole:       main.AppRole,
-		AppSecret:     main.AppSecret,
+		AppRoleID:     main.AppRoleID,
+		AppRoleSecret: main.AppRoleSecret,
 		AppRoleMount:  main.AppRoleMount,
 		TLSSkipVerify: main.TLSSkipVerify,
 		TLSCertFile:   main.TLSCertFile,
@@ -372,8 +372,8 @@ func TestReplicaCluster_MapToVaultConfig(t *testing.T) {
 	replica := ReplicaCluster{
 		Name:          "replica-1",
 		Address:       "http://vault-replica:8200",
-		AppRole:       "role-replica",
-		AppSecret:     "secret-replica",
+		AppRoleID:     "role-replica",
+		AppRoleSecret: "secret-replica",
 		AppRoleMount:  "myappmount",
 		TLSSkipVerify: false,
 		TLSCertFile:   "/path/to/replica-cert.pem",
@@ -381,8 +381,8 @@ func TestReplicaCluster_MapToVaultConfig(t *testing.T) {
 
 	want := VaultConfig{
 		Address:       replica.Address,
-		AppRole:       replica.AppRole,
-		AppSecret:     replica.AppSecret,
+		AppRoleID:     replica.AppRoleID,
+		AppRoleSecret: replica.AppRoleSecret,
 		AppRoleMount:  replica.AppRoleMount,
 		TLSSkipVerify: replica.TLSSkipVerify,
 		TLSCertFile:   replica.TLSCertFile,
