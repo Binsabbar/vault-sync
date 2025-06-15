@@ -35,8 +35,8 @@ type Vault struct {
 
 type MainCluster struct {
 	Address          string   `mapstructure:"address" validate:"required,url"`
-	AppRole          string   `mapstructure:"app_role" validate:"required"`
-	AppSecret        string   `mapstructure:"app_secret" validate:"required"`
+	AppRoleID        string   `mapstructure:"app_role_id" validate:"required"`
+	AppRoleSecret    string   `mapstructure:"app_role_secret" validate:"required"`
 	AppRoleMount     string   `mapstructure:"app_role_mount"`
 	TLSSkipVerify    bool     `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile      string   `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
@@ -47,8 +47,8 @@ type MainCluster struct {
 type ReplicaCluster struct {
 	Name          string `mapstructure:"name" validate:"required"`
 	Address       string `mapstructure:"address" validate:"required,url"`
-	AppRole       string `mapstructure:"app_role" validate:"required"`
-	AppSecret     string `mapstructure:"app_secret" validate:"required"`
+	AppRoleID     string `mapstructure:"app_role_id" validate:"required"`
+	AppRoleSecret string `mapstructure:"app_role_secret" validate:"required"`
 	AppRoleMount  string `mapstructure:"app_role_mount"`
 	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
@@ -56,8 +56,8 @@ type ReplicaCluster struct {
 
 type VaultConfig struct {
 	Address       string `mapstructure:"address" validate:"required,url"`
-	AppRole       string `mapstructure:"app_role" validate:"required"`
-	AppSecret     string `mapstructure:"app_secret" validate:"required"`
+	AppRoleID     string `mapstructure:"app_role_id" validate:"required"`
+	AppRoleSecret string `mapstructure:"app_role_secret" validate:"required"`
 	AppRoleMount  string `mapstructure:"app_role_mount"`
 	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
@@ -113,8 +113,8 @@ func NewConfig() (*Config, error) {
 func (c *MainCluster) MapToVaultConfig() VaultConfig {
 	return VaultConfig{
 		Address:       c.Address,
-		AppRole:       c.AppRole,
-		AppSecret:     c.AppSecret,
+		AppRoleID:     c.AppRoleID,
+		AppRoleSecret: c.AppRoleSecret,
 		AppRoleMount:  c.AppRoleMount,
 		TLSSkipVerify: c.TLSSkipVerify,
 		TLSCertFile:   c.TLSCertFile,
@@ -124,8 +124,8 @@ func (c *MainCluster) MapToVaultConfig() VaultConfig {
 func (c *ReplicaCluster) MapToVaultConfig() VaultConfig {
 	return VaultConfig{
 		Address:       c.Address,
-		AppRole:       c.AppRole,
-		AppSecret:     c.AppSecret,
+		AppRoleID:     c.AppRoleID,
+		AppRoleSecret: c.AppRoleSecret,
 		AppRoleMount:  c.AppRoleMount,
 		TLSSkipVerify: c.TLSSkipVerify,
 		TLSCertFile:   c.TLSCertFile,
