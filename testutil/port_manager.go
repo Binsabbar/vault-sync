@@ -46,17 +46,3 @@ func (pm *portManager) reservePort() (int, error) {
 
 	return 0, fmt.Errorf("failed to find available port after 50 attempts")
 }
-
-func (pm *portManager) releasePort(port int) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	delete(pm.usedPorts, port)
-}
-
-func (pm *portManager) reset() {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	pm.usedPorts = make(map[int]bool)
-}
