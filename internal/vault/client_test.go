@@ -73,37 +73,8 @@ type vaultAuthenticationTestCase struct {
 }
 
 func (vaultTest *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient() {
+	mainConfig, replicaConfigs := vaultTest.setupMultiClusterVaultClientTestSuite()
 	ctx := context.Background()
-
-	roleID, appSecret, _ := vaultTest.mainVault.CreateApproleWithReadPermissions(ctx, "main", mounts...)
-	mainConfig := config.MainCluster{
-		Address:       vaultTest.mainVault.Config.Address,
-		AppRoleID:     roleID,
-		AppRoleSecret: appSecret,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
-	}
-
-	replica1RoleID, replica1AppSecret, _ := vaultTest.replica1Vault.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
-	replica2RoleID, replica2AppSecret, _ := vaultTest.replica2Vault.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
-	replicaConfigs := []config.ReplicaCluster{
-		{
-			Name:          vaultTest.replica1Vault.Config.ClusterName,
-			Address:       vaultTest.replica1Vault.Config.Address,
-			AppRoleID:     replica1RoleID,
-			AppRoleSecret: replica1AppSecret,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
-		},
-		{
-			Name:          vaultTest.replica2Vault.Config.ClusterName,
-			Address:       vaultTest.replica2Vault.Config.Address,
-			AppRoleID:     replica2RoleID,
-			AppRoleSecret: replica2AppSecret,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
-		},
-	}
 
 	vaultTest.T().Run("does not return error if authentication is successful", func(t *testing.T) {
 		_, err := NewMultiClusterVaultClient(ctx, mainConfig, replicaConfigs)
@@ -138,4 +109,100 @@ func (vaultTest *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClie
 		})
 	})
 
+}
+
+type mountTestCase struct {
+	name           string
+	secretPaths    []string
+	expectedMounts []string
+	expectError    bool
+	errorMsg       string
+}
+
+func (vaultTest *MultiClusterVaultClientTestSuite) TestGetSecretMountsExist() {
+	ctx := context.Background()
+	mainConfig, replicaConfigs := vaultTest.setupMultiClusterVaultClientTestSuite()
+	vaultTest.mainVault.EnableKVv2Mounts(ctx, "common", "extra_mount")
+	vaultTest.replica1Vault.EnableKVv2Mounts(ctx, "common")
+
+	testCases := []mountTestCase{
+		{
+			name:           "single kv mount in all clusters",
+			secretPaths:    []string{"team-a/myapp/database", "team-b/myapp/config"},
+			expectedMounts: []string{"team-a", "team-b"},
+			expectError:    false,
+		},
+		{
+			name:           "multiple mounts in all clusters",
+			secretPaths:    []string{"team-a/myapp/database", "team-a/myapp", "team-b/infra/myinfratool"},
+			expectedMounts: []string{"team-a", "team-b"},
+			expectError:    false,
+		},
+		{
+			name:           "multiple mounts in all clusters with more enabled but not used",
+			secretPaths:    []string{"team-a/myapp/database", "team-a/myapp", "team-c/infra/myinfratool"},
+			expectedMounts: []string{"team-a", "team-c"},
+			expectError:    false,
+		},
+		{
+			name:        "no mounts in any cluster",
+			secretPaths: []string{"kv/myapp/database", "do_not_exist/infra/myinfratool"},
+			expectError: true,
+			errorMsg:    "missing mounts in main cluster",
+		},
+		{
+			name:        "mounts exist in some clusters",
+			secretPaths: []string{"team-a/myapp/database", "team-b/infra/myinfratool", "common/myapp/config"},
+			expectError: true,
+			errorMsg:    "missing mounts in replica cluster",
+		},
+	}
+
+	for _, tc := range testCases {
+		vaultTest.T().Run(tc.name, func(t *testing.T) {
+			mclient, _ := NewMultiClusterVaultClient(ctx, mainConfig, replicaConfigs)
+
+			mounts, error := mclient.GetSecretMounts(ctx, tc.secretPaths)
+
+			if tc.expectError {
+				assert.ErrorContains(t, error, tc.errorMsg, "Expected error message to contain: %s", tc.errorMsg)
+			} else {
+				assert.ElementsMatch(t, mounts, tc.expectedMounts, "Expected mounts to match: %v", mounts)
+			}
+		})
+	}
+}
+
+func (vaultTest *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestSuite() (config.MainCluster, []config.ReplicaCluster) {
+	ctx := context.Background()
+	roleID, appSecret, _ := vaultTest.mainVault.CreateApproleWithReadPermissions(ctx, "main", mounts...)
+	mainConfig := config.MainCluster{
+		Address:       vaultTest.mainVault.Config.Address,
+		AppRoleID:     roleID,
+		AppRoleSecret: appSecret,
+		AppRoleMount:  "approle",
+		TLSSkipVerify: true,
+	}
+
+	replica1RoleID, replica1AppSecret, _ := vaultTest.replica1Vault.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
+	replica2RoleID, replica2AppSecret, _ := vaultTest.replica2Vault.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
+	replicaConfigs := []config.ReplicaCluster{
+		{
+			Name:          vaultTest.replica1Vault.Config.ClusterName,
+			Address:       vaultTest.replica1Vault.Config.Address,
+			AppRoleID:     replica1RoleID,
+			AppRoleSecret: replica1AppSecret,
+			AppRoleMount:  "approle",
+			TLSSkipVerify: true,
+		},
+		{
+			Name:          vaultTest.replica2Vault.Config.ClusterName,
+			Address:       vaultTest.replica2Vault.Config.Address,
+			AppRoleID:     replica2RoleID,
+			AppRoleSecret: replica2AppSecret,
+			AppRoleMount:  "approle",
+			TLSSkipVerify: true,
+		},
+	}
+	return mainConfig, replicaConfigs
 }
