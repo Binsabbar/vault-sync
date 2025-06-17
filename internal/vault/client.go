@@ -5,27 +5,17 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"sync"
 	"vault-sync/internal/config"
 	"vault-sync/pkg/converter"
 	"vault-sync/pkg/log"
-
-	"github.com/hashicorp/vault-client-go"
-	"github.com/hashicorp/vault-client-go/schema"
-	"github.com/rs/zerolog"
 )
 
 type MultiClusterVaultClient struct {
 	mainCluster     *clusterManager
 	replicaClusters map[string]*clusterManager
 	mu              sync.RWMutex
-}
-
-type clusterManager struct {
-	client *vault.Client
-	config config.VaultConfig
 }
 
 func NewMultiClusterVaultClient(ctx context.Context, mainConfig config.MainCluster, replicasConfig []config.ReplicaCluster) (*MultiClusterVaultClient, error) {
@@ -59,34 +49,6 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig config.MainClust
 	return multiClusterClient, nil
 }
 
-func newClusterManager(cfg config.VaultConfig) (*clusterManager, error) {
-	tlsConfig := vault.TLSConfiguration{
-		InsecureSkipVerify: cfg.TLSSkipVerify,
-	}
-	if cfg.TLSCertFile != "" {
-		tlsConfig = vault.TLSConfiguration{
-			InsecureSkipVerify: cfg.TLSSkipVerify,
-			ServerCertificate: vault.ServerCertificateEntry{
-				FromFile: cfg.TLSCertFile,
-			},
-		}
-	}
-
-	client, err := vault.New(
-		vault.WithAddress(cfg.Address),
-		vault.WithTLS(tlsConfig),
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Vault client: %w", err)
-	}
-
-	return &clusterManager{
-		client: client,
-		config: cfg,
-	}, nil
-}
-
 // GetSecretMounts retrieves the secret mounts for the given secret paths
 // It checks if the mounts exist in all clusters (main and replicas).
 func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPaths []string) ([]string, error) {
@@ -116,18 +78,20 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 	return mounts, nil
 }
 
+// checkMounts checks if the specified mounts exist in the Vault cluster.
+// It returns a slice of missing mounts if any are not found.
 func checkMounts(ctx context.Context, cm *clusterManager, clusterName string, mounts []string) ([]string, error) {
 	if err := cm.ensureValidToken(ctx); err != nil {
 		cm.decorateLog(log.Logger.Error, "check_mounts").
 			Err(err).
 			Str("cluster", clusterName).
 			Msg("Failed to ensure valid token")
-		return nil, fmt.Errorf("failed to ensure valid token for cluster %s: %w", clusterName, err)
+		return nil, err
 	}
 
 	existingMounts, err := cm.getExistingMounts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get existing mounts for cluster %s: %w", clusterName, err)
+		return nil, err
 	}
 
 	var missingMounts []string
@@ -146,30 +110,6 @@ func checkMounts(ctx context.Context, cm *clusterManager, clusterName string, mo
 		return missingMounts, nil
 	}
 	return nil, nil
-}
-
-// getExistingMounts retrieves the existing secret mounts from Vault
-// It returns a map where keys are mount paths and values are true.
-// The mount paths are cleaned to remove trailing slashes.
-func (cm *clusterManager) getExistingMounts(ctx context.Context) (map[string]bool, error) {
-	resp, err := cm.client.System.MountsListSecretsEngines(ctx)
-	if err != nil {
-		cm.decorateLog(log.Logger.Error, "get_existing_mounts").
-			Err(err).
-			Msg("Failed to list secret engines")
-		return nil, fmt.Errorf("failed to list secret engines: %w", err)
-	}
-
-	existingMounts := make(map[string]bool)
-	for mountPath := range resp.Data {
-		cleanMountPath := strings.TrimSuffix(mountPath, "/")
-		existingMounts[cleanMountPath] = true
-	}
-
-	cm.decorateLog(log.Logger.Debug, "get_existing_mounts").
-		Strs("mount_paths", converter.MapKeysToSlice(existingMounts)).
-		Msg("Found existing mounts")
-	return existingMounts, nil
 }
 
 // extractMountsFromPaths extracts unique mount paths from secret paths
@@ -192,8 +132,8 @@ func extractMountsFromPaths(secretPaths []string) []string {
 // extractMountFromPath extracts the mount path from a given secret path
 // It assumes the mount is the first segment of the path.
 // Examples:
+//
 //	"/kv/myapp/database" -> "kv"
-
 func extractMountFromPath(secretPath string) string {
 	secretPath = strings.TrimPrefix(secretPath, "/")
 	parts := strings.Split(secretPath, "/")
@@ -201,79 +141,4 @@ func extractMountFromPath(secretPath string) string {
 		return parts[0]
 	}
 	return ""
-}
-
-// authenticate authenticates the cluster manager with Vault using AppRole
-// It sets the client token on success.
-func (cm *clusterManager) authenticate(ctx context.Context) error {
-	cm.decorateLog(log.Logger.Info, "authenticate").Msg("Authenticating with Vault")
-
-	res, err := cm.client.Auth.AppRoleLogin(
-		ctx,
-		schema.AppRoleLoginRequest{
-			RoleId:   cm.config.AppRoleID,
-			SecretId: cm.config.AppRoleSecret,
-		},
-		vault.WithMountPath(cm.config.AppRoleMount),
-	)
-	if err != nil {
-		cm.decorateLog(log.Logger.Error, "authenticate").Err(err)
-		return fmt.Errorf("failed to authenticate with role ID: %s at mount %s. (%w)", cm.config.AppRoleID, cm.config.AppRoleMount, err)
-	}
-	if err := cm.client.SetToken(res.Auth.ClientToken); err != nil {
-		cm.decorateLog(log.Logger.Error, "authenticate").Err(err)
-		return fmt.Errorf("failed to set client token: %w", err)
-	}
-	return nil
-}
-
-const (
-	fiveMinutes = 5 * time.Minute
-)
-
-// ensureValidToken checks if the Vault token is valid and has sufficient TTL.
-// If the token is invalid or has low TTL, it re-authenticates.
-func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
-	reauthenticate := func(msg string, ttlSeconds int64, err error) error {
-		cm.decorateLog(log.Logger.Warn, "ensure_valid_token").
-			Int64("ttl_seconds", ttlSeconds).
-			Err(err).
-			Msg(msg)
-		return cm.authenticate(ctx)
-	}
-
-	cm.decorateLog(log.Logger.Debug, "ensure_valid_token").Msg("Ensuring Vault token is valid")
-
-	resp, err := cm.client.Auth.TokenLookUpSelf(ctx)
-	if err != nil {
-		return reauthenticate("Failed to look up token, re-authenticating", 0, err)
-	}
-
-	data := resp.Data
-	if ttlInterface, ok := data["ttl"]; ok {
-		ttlSeconds, err := converter.ConvertInterfaceToInt64(ttlInterface)
-		if err != nil {
-			return reauthenticate("Could not parse token TTL, re-authenticating", 0, err)
-		}
-
-		fiveMinutesInSeconds, _ := converter.ConvertInterfaceToInt64(fiveMinutes.Seconds())
-		if ttlSeconds < fiveMinutesInSeconds {
-			return reauthenticate("Token TTL is low, re-authenticating", ttlSeconds, nil)
-		}
-
-		cm.decorateLog(log.Logger.Debug, "ensure_valid_token").
-			Int64("ttl_seconds", ttlSeconds).
-			Msg("Token is valid")
-
-		return nil
-	}
-
-	return reauthenticate("Could not determine token TTL, re-authenticating", 0, nil)
-}
-
-func (cm *clusterManager) decorateLog(eventFactory func() *zerolog.Event, event string) *zerolog.Event {
-	return eventFactory().Str("app_role", cm.config.AppRoleID).
-		Str("app_role_mount", cm.config.AppRoleMount).
-		Str("vault_address", cm.config.Address).
-		Str("event", event)
 }

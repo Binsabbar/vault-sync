@@ -122,36 +122,43 @@ type mountTestCase struct {
 func (vaultTest *MultiClusterVaultClientTestSuite) TestGetSecretMountsExist() {
 	ctx := context.Background()
 	mainConfig, replicaConfigs := vaultTest.setupMultiClusterVaultClientTestSuite()
-	vaultTest.mainVault.EnableKVv2Mounts(ctx, "common", "extra_mount")
+	vaultTest.mainVault.EnableKVv2Mounts(ctx, "common", "main_cluster_mount")
 	vaultTest.replica1Vault.EnableKVv2Mounts(ctx, "common")
 
 	testCases := []mountTestCase{
 		{
-			name:           "single kv mount in all clusters",
+			name:           "mounts exist in all clusters",
 			secretPaths:    []string{"team-a/myapp/database", "team-b/myapp/config"},
 			expectedMounts: []string{"team-a", "team-b"},
 			expectError:    false,
 		},
 		{
-			name:           "multiple mounts in all clusters",
+			name:           "duplicated mounts in paths returns unique mounts",
 			secretPaths:    []string{"team-a/myapp/database", "team-a/myapp", "team-b/infra/myinfratool"},
 			expectedMounts: []string{"team-a", "team-b"},
 			expectError:    false,
 		},
 		{
-			name:           "multiple mounts in all clusters with more enabled but not used",
+			// there are multiple mounts enabled, but only those in secret paths should be returned
+			name:           "returns only mounts that exist in secret paths if multiple mounts are enabled",
 			secretPaths:    []string{"team-a/myapp/database", "team-a/myapp", "team-c/infra/myinfratool"},
 			expectedMounts: []string{"team-a", "team-c"},
 			expectError:    false,
 		},
 		{
-			name:        "no mounts in any cluster",
+			name:        "mounts does not exist in main cluster",
 			secretPaths: []string{"kv/myapp/database", "do_not_exist/infra/myinfratool"},
 			expectError: true,
 			errorMsg:    "missing mounts in main cluster",
 		},
 		{
-			name:        "mounts exist in some clusters",
+			name:        "mounts exists in main cluster but not in replica clusters",
+			secretPaths: []string{"main_cluster_mount/myapp/database"},
+			expectError: true,
+			errorMsg:    "missing mounts in replica cluster",
+		},
+		{
+			name:        "mounts exists in main and one replica cluster but not in the other",
 			secretPaths: []string{"team-a/myapp/database", "team-b/infra/myinfratool", "common/myapp/config"},
 			expectError: true,
 			errorMsg:    "missing mounts in replica cluster",
