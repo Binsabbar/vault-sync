@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile-local
-    command: ["sync", "-c", "/tmp/sample-config.yaml"]
+    command: ["sync", "--config", "/tmp/sample-config.yaml"]
     volumes:
       - ./sample-config.yaml:/tmp/sample-config.yaml:ro
     depends_on:
