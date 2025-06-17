@@ -195,7 +195,10 @@ func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, appr
 	return v.getAppRoleIDAndSecret(ctx, approle)
 }
 
-func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) (string, string, error) {
+// CreateApproleWithRWPermissions creates an AppRole with read and write permissions for the specified mounts.
+// It generates a policy that allows creating, updating, reading, and listing secrets in the specified mounts.
+// It returns the AppRole ID and secret.
+func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) (roleID string, roleSecret string, err error) {
 	for _, mount := range mounts {
 		policyPaths := []string{
 			`path "auth/approle/login" { capabilities = ["create"] }`,
@@ -221,6 +224,11 @@ func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approl
 
 func (v *VaultHelper) WriteSecret(ctx context.Context, mount, path string, data map[string]string) (string, error) {
 	cmd := fmt.Sprintf("vault kv put %s/%s %s", mount, path, formatDataForVault(data))
+	return v.ExecuteVaultCommand(ctx, cmd)
+}
+
+func (v *VaultHelper) SetTokenTTL(ctx context.Context, approle string, ttl string, maxTTL string) (string, error) {
+	cmd := fmt.Sprintf("vault write auth/approle/role/%s token_ttl=%s token_max_ttl=%s", approle, ttl, maxTTL)
 	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
