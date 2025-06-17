@@ -29,13 +29,13 @@ type PostgresDatastore struct {
 }
 
 type PostgresConfig struct {
-	config.Postgres
+	*config.Postgres
 	MinimumConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
 }
 
-func NewPostgresDatastore(cfg config.Postgres, migrationSource migrations.MigrationSource) (*PostgresDatastore, error) {
+func NewPostgresDatastore(cfg *config.Postgres, migrationSource migrations.MigrationSource) (*PostgresDatastore, error) {
 	connectionString := buildPostgresDSN(cfg)
 	redactedConnectionString := redactDSN(connectionString)
 
@@ -111,7 +111,7 @@ func (p *PostgresDatastore) initSchema() error {
 		return fmt.Errorf("could not create postgres driver for migrate: %w", err)
 	}
 
-	m, err := migrate.NewWithInstance(p.migrationSource.GetSourceType(), d, p.DB.DriverName(), driver)
+	m, err := migrate.NewWithInstance(migrationSource.GetSourceType(), d, p.DB.DriverName(), driver)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("Could not create migrate instance")
 		return fmt.Errorf("could not create migrate instance: %w", err)
@@ -134,7 +134,7 @@ func (p *PostgresDatastore) initSchema() error {
 	return nil
 }
 
-func buildPostgresDSN(cfg config.Postgres) string {
+func buildPostgresDSN(cfg *config.Postgres) string {
 	sslMode := cfg.SSLMode
 	if sslMode == "" {
 		sslMode = "disable"
