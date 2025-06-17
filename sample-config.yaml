@@ -1,0 +1,60 @@
+# id is the unique identifier for sync service
+id: test
+# sync interval is the interval at which the cluster will sync secrets from the main cluster
+interval: 5
+log_level: info
+
+postgres:
+  # address is the address of the PostgreSQL database
+  address: localhost
+  port: 5432
+  # username is the username used to connect to the PostgreSQL database
+  username: postgres
+  # password is the password used to connect to the PostgreSQL database
+  password: postgres
+  # db_name is the name of the PostgreSQL database
+  db_name: vault_sync
+  # ssl_mode is the SSL mode used to connect to the PostgreSQL database
+  ssl_mode: disable
+  ssl_root_cert_file: /path/to/root.crt
+  # max_connections is the maximum number of connections to the PostgreSQL database
+  max_connections: 10
+
+vault:
+  # main_cluster is the main cluster from which secrets will be replicated
+  main_cluster:
+    # address is the address of the main cluster
+    address: http://vault:8200
+    # tls_skip_verify is a boolean that indicates whether to skip TLS verification
+    tls_skip_verify: true
+    # tls_cert_file is the path to the TLS certificate file, only if tls_skip_verify is false
+    tls_cert_file: /path/to/cert.pem
+    # app_role is the role name used to authenticate with the main cluster
+    app_role_id: my_app_role
+    # app_secret is the secret ID used to authenticate with the main cluster
+    app_role_secret: my_app_secret
+    # app_role_mount is the mount point for the AppRole authentication method
+    app_role_mount: approle
+    # paths_to_replicate is a list of paths to replicate from the main cluster
+    paths_to_replicate:
+      - secret/data/test
+      - secret/data/test2
+    # paths_to_ignore is a list of paths to ignore in the main cluster
+    paths_to_ignore:
+      - secret/data/test3
+      - secret/data/test4
+  replica_clusters:
+    - name: replica-2
+      address: http://vault-replica-2:8200
+      tls_skip_verify: true
+      tls_cert_file: /path/to/cert-2.pem
+      app_role_id: my_app_role_replica_2
+      app_role_secret: my_app_secret_replica_2
+      app_role_mount: approle2
+    - name: replica-3
+      address: http://vault-replica-3:8200
+      tls_skip_verify: true
+      tls_cert_file: /path/to/cert-3.pem
+      app_role_id: my_app_role_replica_3
+      app_role_secret: my_app_secret_replica_3
+      app_role_mount: approle3
