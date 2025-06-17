@@ -5,9 +5,7 @@ FROM golang:1.24 as builder
 WORKDIR /app/vault-sync
 
 # Copy the Go modules manifests
-COPY cmd/ /app/vault-sync/cmd
-# COPY internal /app/vault-sync/internal
-COPY  go.mod go.sum main.go /app/vault-sync/
+COPY . /app/vault-sync/
 
 RUN go mod verify && go mod tidy
 
