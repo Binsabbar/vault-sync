@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,10 +17,10 @@ import (
 
 type clusterManager struct {
 	client *vault.Client
-	config config.VaultConfig
+	config *config.VaultConfig
 }
 
-func newClusterManager(cfg config.VaultConfig) (*clusterManager, error) {
+func newClusterManager(cfg *config.VaultConfig) (*clusterManager, error) {
 	tlsConfig := vault.TLSConfiguration{
 		InsecureSkipVerify: cfg.TLSSkipVerify,
 	}
@@ -95,7 +96,7 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 
 	data := resp.Data
 	if ttlInterface, ok := data["ttl"]; ok {
-		ttlSeconds, err := converter.ConvertInterfaceToInt64(ttlInterface)
+		ttlSeconds, err := ttlInterface.(json.Number).Int64()
 		if err != nil {
 			return reauthenticate("Could not parse token TTL, re-authenticating", 0, err)
 		}
