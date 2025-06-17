@@ -344,7 +344,7 @@ func TestConfigurationValidation(t *testing.T) {
 }
 
 func TestMainCluster_MapToVaultConfig(t *testing.T) {
-	main := MainCluster{
+	main := &MainCluster{
 		Address:          "http://vault:8200",
 		AppRoleID:        "role",
 		AppRoleSecret:    "secret",
@@ -355,7 +355,7 @@ func TestMainCluster_MapToVaultConfig(t *testing.T) {
 		PathsToIgnore:    []string{"secret/data/b"},
 	}
 
-	want := VaultConfig{
+	want := &VaultConfig{
 		Address:       main.Address,
 		AppRoleID:     main.AppRoleID,
 		AppRoleSecret: main.AppRoleSecret,
@@ -369,7 +369,7 @@ func TestMainCluster_MapToVaultConfig(t *testing.T) {
 }
 
 func TestReplicaCluster_MapToVaultConfig(t *testing.T) {
-	replica := ReplicaCluster{
+	replica := &ReplicaCluster{
 		Name:          "replica-1",
 		Address:       "http://vault-replica:8200",
 		AppRoleID:     "role-replica",
@@ -379,7 +379,7 @@ func TestReplicaCluster_MapToVaultConfig(t *testing.T) {
 		TLSCertFile:   "/path/to/replica-cert.pem",
 	}
 
-	want := VaultConfig{
+	want := &VaultConfig{
 		Address:       replica.Address,
 		AppRoleID:     replica.AppRoleID,
 		AppRoleSecret: replica.AppRoleSecret,
