@@ -110,8 +110,8 @@ func NewConfig() (*Config, error) {
 	return &cfg, nil
 }
 
-func (c *MainCluster) MapToVaultConfig() VaultConfig {
-	return VaultConfig{
+func (c *MainCluster) MapToVaultConfig() *VaultConfig {
+	return &VaultConfig{
 		Address:       c.Address,
 		AppRoleID:     c.AppRoleID,
 		AppRoleSecret: c.AppRoleSecret,
@@ -121,8 +121,8 @@ func (c *MainCluster) MapToVaultConfig() VaultConfig {
 	}
 }
 
-func (c *ReplicaCluster) MapToVaultConfig() VaultConfig {
-	return VaultConfig{
+func (c *ReplicaCluster) MapToVaultConfig() *VaultConfig {
+	return &VaultConfig{
 		Address:       c.Address,
 		AppRoleID:     c.AppRoleID,
 		AppRoleSecret: c.AppRoleSecret,
