@@ -18,7 +18,7 @@ type MultiClusterVaultClient struct {
 	mu              sync.RWMutex
 }
 
-func NewMultiClusterVaultClient(ctx context.Context, mainConfig config.MainCluster, replicasConfig []config.ReplicaCluster) (*MultiClusterVaultClient, error) {
+func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainCluster, replicasConfig []*config.ReplicaCluster) (*MultiClusterVaultClient, error) {
 	mainClient, err := newClusterManager(mainConfig.MapToVaultConfig())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create main cluster client: %w", err)
