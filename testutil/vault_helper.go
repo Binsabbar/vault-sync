@@ -135,6 +135,8 @@ func (v *VaultHelper) Start(ctx context.Context) error {
 }
 
 // Vault Operations
+
+// EnableAppRoleAuth enables the AppRole authentication method in Vault.
 func (v *VaultHelper) EnableAppRoleAuth(ctx context.Context) error {
 	if _, err := v.ExecuteVaultCommand(ctx, "vault auth enable approle"); err != nil {
 		return fmt.Errorf("failed to enable AppRole auth: %w", err)
@@ -142,6 +144,7 @@ func (v *VaultHelper) EnableAppRoleAuth(ctx context.Context) error {
 	return nil
 }
 
+// GetAppRoleID retrieves the role ID for the specified AppRole.
 func (v *VaultHelper) GetAppRoleID(ctx context.Context, approle string) (string, error) {
 	cmd := fmt.Sprintf("vault read -field=role_id auth/approle/role/%s/role-id", approle)
 	output, err := v.ExecuteVaultCommand(ctx, cmd)
@@ -151,6 +154,7 @@ func (v *VaultHelper) GetAppRoleID(ctx context.Context, approle string) (string,
 	return output, nil
 }
 
+// GetAppSecret retrieves the secret ID for the specified AppRole.
 func (v *VaultHelper) GetAppSecret(ctx context.Context, approle string) (string, error) {
 	cmd := fmt.Sprintf("vault write -force -field=secret_id auth/approle/role/%s/secret-id", approle)
 	output, err := v.ExecuteVaultCommand(ctx, cmd)
@@ -160,6 +164,7 @@ func (v *VaultHelper) GetAppSecret(ctx context.Context, approle string) (string,
 	return output, nil
 }
 
+// EnableKVv2Mounts enables KV version 2 mounts for the specified paths.
 func (v *VaultHelper) EnableKVv2Mounts(ctx context.Context, mounts ...string) error {
 	for _, mount := range mounts {
 		cmd := fmt.Sprintf("vault secrets enable -path=%s -version=2 kv", mount)
@@ -170,6 +175,10 @@ func (v *VaultHelper) EnableKVv2Mounts(ctx context.Context, mounts ...string) er
 	return nil
 }
 
+// CreateApproleWithReadPermissions creates an AppRole with read permissions for the specified mounts.
+// It generates a policy that allows reading and listing secrets in the specified mounts.
+// It returns the AppRole ID and secret.
+// The policy also includes permissions to read the mounts themselves.
 func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, approle string, mounts ...string) (string, string, error) {
 	for _, mount := range mounts {
 		policyPaths := []string{
@@ -198,6 +207,7 @@ func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, appr
 // CreateApproleWithRWPermissions creates an AppRole with read and write permissions for the specified mounts.
 // It generates a policy that allows creating, updating, reading, and listing secrets in the specified mounts.
 // It returns the AppRole ID and secret.
+// The policy also includes permissions to read the mounts themselves.
 func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) (roleID string, roleSecret string, err error) {
 	for _, mount := range mounts {
 		policyPaths := []string{
@@ -222,16 +232,27 @@ func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approl
 	return v.getAppRoleIDAndSecret(ctx, approle)
 }
 
+// WriteSecret writes a secret to the specified path in the KV store.
 func (v *VaultHelper) WriteSecret(ctx context.Context, mount, path string, data map[string]string) (string, error) {
 	cmd := fmt.Sprintf("vault kv put %s/%s %s", mount, path, formatDataForVault(data))
 	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
+// DeleteSecret deletes a secret at the specified path
+func (v *VaultHelper) DeleteSecret(ctx context.Context, secretPath string) (string, error) {
+	cmd := fmt.Sprintf("vault kv delete %s", secretPath)
+	return v.ExecuteVaultCommand(ctx, cmd)
+}
+
+// SetTokenTTL sets the token TTL and max TTL for the specified AppRole.
+// It returns the output of the command execution.
 func (v *VaultHelper) SetTokenTTL(ctx context.Context, approle string, ttl string, maxTTL string) (string, error) {
 	cmd := fmt.Sprintf("vault write auth/approle/role/%s token_ttl=%s token_max_ttl=%s", approle, ttl, maxTTL)
 	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
+// ExecuteVaultCommand executes a command in the Vault container and returns the output.
+// It uses the `sh -c` command to allow for complex commands and redirection.
 func (v *VaultHelper) ExecuteVaultCommand(ctx context.Context, command string) (string, error) {
 	_, output, err := v.container.Exec(ctx, []string{"sh", "-c", command}, exec.Multiplexed())
 	if err != nil {

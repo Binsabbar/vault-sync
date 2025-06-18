@@ -58,7 +58,7 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 		return nil, fmt.Errorf("no valid mounts found in provided secret paths")
 	}
 
-	if missing, err := checkMounts(ctx, mc.mainCluster, "main", mounts); err != nil {
+	if missing, err := mc.mainCluster.checkMounts(ctx, "main", mounts); err != nil {
 		return nil, err
 	} else if len(missing) > 0 {
 		return nil, fmt.Errorf("missing mounts in main cluster: %v", missing)
@@ -67,7 +67,7 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 	for name, cm := range mc.replicaClusters {
-		if missing, err := checkMounts(ctx, cm, name, mounts); err != nil {
+		if missing, err := cm.checkMounts(ctx, name, mounts); err != nil {
 			return nil, err
 		} else if len(missing) > 0 {
 			return nil, fmt.Errorf("missing mounts in replica cluster %s: %v", name, missing)
@@ -78,38 +78,30 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 	return mounts, nil
 }
 
-// checkMounts checks if the specified mounts exist in the Vault cluster.
-// It returns a slice of missing mounts if any are not found.
-func checkMounts(ctx context.Context, cm *clusterManager, clusterName string, mounts []string) ([]string, error) {
-	if err := cm.ensureValidToken(ctx); err != nil {
-		cm.decorateLog(log.Logger.Error, "check_mounts").
-			Err(err).
-			Str("cluster", clusterName).
-			Msg("Failed to ensure valid token")
-		return nil, err
+// GetKeysUnderMount retrieves all available keys (using path format) under a given mount from the main cluster.
+// This operation is only performed on the main cluster as it's used for discovery purposes.
+func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount string) ([]string, error) {
+	if mount == "" {
+		return nil, fmt.Errorf("mount cannot be empty")
 	}
 
-	existingMounts, err := cm.getExistingMounts(ctx)
+	log.Logger.Debug().
+		Str("mount", mount).
+		Str("event", "get_keys_under_mount").
+		Msg("Retrieving all keys under mount from main cluster")
+
+	keys, err := mc.mainCluster.fetchKeysUnderMount(ctx, mount)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get keys under mount %s: %w", mount, err)
 	}
 
-	var missingMounts []string
-	for _, mount := range mounts {
-		if !existingMounts[mount] {
-			missingMounts = append(missingMounts, mount)
-		}
-	}
+	log.Logger.Info().
+		Str("mount", mount).
+		Str("event", "get_keys_under_mount").
+		Int("key_count", len(keys)).
+		Msg("Successfully retrieved keys from main cluster")
 
-	if len(missingMounts) > 0 {
-		cm.decorateLog(log.Logger.Error, "check_mounts").
-			Str("cluster", clusterName).
-			Strs("missing_mounts", missingMounts).
-			Strs("existing_mounts", converter.MapKeysToSlice(existingMounts)).
-			Msg("Some secret mounts do not exist in cluster")
-		return missingMounts, nil
-	}
-	return nil, nil
+	return keys, nil
 }
 
 // extractMountsFromPaths extracts unique mount paths from secret paths
