@@ -140,6 +140,116 @@ func (cm *clusterManager) getExistingMounts(ctx context.Context) (map[string]boo
 	return existingMounts, nil
 }
 
+// checkMounts checks if the specified mounts exist in the Vault cluster.
+// It returns a slice of missing mounts if any are not found.
+func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, mounts []string) ([]string, error) {
+	if err := cm.ensureValidToken(ctx); err != nil {
+		cm.decorateLog(log.Logger.Error, "check_mounts").
+			Err(err).
+			Str("cluster", clusterName).
+			Msg("Failed to ensure valid token")
+		return nil, err
+	}
+
+	existingMounts, err := cm.getExistingMounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var missingMounts []string
+	for _, mount := range mounts {
+		if !existingMounts[mount] {
+			missingMounts = append(missingMounts, mount)
+		}
+	}
+
+	if len(missingMounts) > 0 {
+		cm.decorateLog(log.Logger.Error, "check_mounts").
+			Str("cluster", clusterName).
+			Strs("missing_mounts", missingMounts).
+			Strs("existing_mounts", converter.MapKeysToSlice(existingMounts)).
+			Msg("Some secret mounts do not exist in cluster")
+		return missingMounts, nil
+	}
+	return nil, nil
+}
+
+// fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
+func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string) ([]string, error) {
+	if err := cm.ensureValidToken(ctx); err != nil {
+		cm.decorateLog(log.Logger.Error, "fetch_keys_under_mount").
+			Str("mount", mount).
+			Err(err).
+			Msg("Failed to ensure valid token")
+		return nil, err
+	}
+
+	cm.decorateLog(log.Logger.Debug, "fetch_keys_under_mount").
+		Str("mount", mount).
+		Msg("Listing keys under mount")
+
+	var allKeys []string
+	err := cm.listKeysRecursively(ctx, mount, "", &allKeys)
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "fetch_keys_under_mount").
+			Err(err).
+			Str("mount", mount).
+			Msg("Failed to list keys recursively")
+		return nil, err
+	}
+
+	cm.decorateLog(log.Logger.Debug, "fetch_keys_under_mount").
+		Str("mount", mount).
+		Int("key_count", len(allKeys)).
+		Strs("keys", allKeys).
+		Msg("Successfully retrieved all keys")
+
+	return allKeys, nil
+}
+
+// listKeysRecursively recursively lists all keys under a path
+func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string) error {
+	listPath := ""
+	if currentPath != "" {
+		listPath = currentPath
+	}
+
+	resp, err := cm.client.Secrets.KvV2List(ctx, listPath, vault.WithMountPath(mount))
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no such path") {
+			return nil
+		}
+		return fmt.Errorf("failed to list path %s: %w", listPath, err)
+	}
+
+	if resp.Data.Keys == nil {
+		return nil
+	}
+
+	for _, key := range resp.Data.Keys {
+		keyPath := strings.TrimSuffix(key, mount)
+		if currentPath != "" {
+			keyPath = fmt.Sprintf("%s/%s", currentPath, key)
+		}
+
+		// If key ends with '/', it's a directory - recurse into it
+		if strings.HasSuffix(key, "/") {
+			dirPath := strings.TrimSuffix(keyPath, "/")
+			err := cm.listKeysRecursively(ctx, mount, dirPath, allKeys)
+			if err != nil {
+				return err
+			}
+		} else {
+			keyPath = strings.TrimPrefix(keyPath, mount+"/")
+			*allKeys = append(*allKeys, keyPath)
+		}
+	}
+
+	return nil
+}
+
+// decorateLog adds common fields to the log event for cluster manager operations
+// It returns a new log event with the specified event factory and event name.
 func (cm *clusterManager) decorateLog(eventFactory func() *zerolog.Event, event string) *zerolog.Event {
 	return eventFactory().Str("app_role", cm.config.AppRoleID).
 		Str("app_role_mount", cm.config.AppRoleMount).

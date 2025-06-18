@@ -51,7 +51,10 @@ func (suite *MultiClusterVaultClientTestSuite) BeforeTest(suiteName, testName st
 	}
 
 	switch testName {
-	case "TestCreateNewMultiClusterClient", "TestGetSecretMountsExist":
+	case
+		"TestCreateNewMultiClusterClient",
+		"TestGetSecretMounts",
+		"TestGetKeysUnderMount":
 		suite.mainConfig, suite.replicaConfig = suite.setupMultiClusterVaultClientTestSuite()
 	}
 }
@@ -142,18 +145,16 @@ func (suite *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient()
 	})
 }
 
-type mountTestCase struct {
-	name           string
-	secretPaths    []string
-	expectedMounts []string
-	expectError    bool
-	errorMsg       string
-}
-
-func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMountsExist() {
-	ctx := context.Background()
-	suite.mainVault.EnableKVv2Mounts(ctx, "common", "main_cluster_mount")
-	suite.replica1Vault.EnableKVv2Mounts(ctx, "common")
+func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMounts() {
+	suite.mainVault.EnableKVv2Mounts(suite.ctx, "common", "main_cluster_mount")
+	suite.replica1Vault.EnableKVv2Mounts(suite.ctx, "common")
+	type mountTestCase struct {
+		name           string
+		secretPaths    []string
+		expectedMounts []string
+		expectError    bool
+		errorMsg       string
+	}
 
 	testCases := []mountTestCase{
 		{
@@ -203,14 +204,109 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMountsExist() {
 
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
-			mclient, _ := NewMultiClusterVaultClient(ctx, suite.mainConfig, suite.replicaConfig)
+			mclient, _ := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 
-			mounts, error := mclient.GetSecretMounts(ctx, tc.secretPaths)
+			mounts, error := mclient.GetSecretMounts(suite.ctx, tc.secretPaths)
 
 			if tc.expectError {
 				suite.ErrorContains(error, tc.errorMsg, "Expected error message to contain: %s", tc.errorMsg)
 			} else {
 				suite.ElementsMatch(mounts, tc.expectedMounts, "Expected mounts to match: %v", mounts)
+			}
+		})
+	}
+}
+
+func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
+	type keyTestCase struct {
+		name         string
+		mount        string
+		setupSecrets map[string]map[string]string // path -> secret data
+		expectedKeys []string
+		expectError  bool
+		errorMsg     string
+	}
+
+	testCases := []keyTestCase{
+		{
+			name:  "retrieve keys from mount with nested structure",
+			mount: "team-a",
+			setupSecrets: map[string]map[string]string{
+				"team-a/app1/database":                   {"host": "db1.example.com", "password": "secret1"},
+				"team-a/app1/api":                        {"key": "api-key-123"},
+				"team-a/app2/database":                   {"host": "db2.example.com", "password": "secret2"},
+				"team-a/shared/config":                   {"env": "production"},
+				"team-a/infrastructure/k8s":              {"cluster": "prod-cluster"},
+				"team-a/infrastructure/internal/grafana": {"username": "test-user"},
+			},
+			expectedKeys: []string{
+				"app1/database",
+				"app1/api",
+				"app2/database",
+				"shared/config",
+				"infrastructure/k8s",
+				"infrastructure/internal/grafana",
+			},
+			expectError: false,
+		},
+		{
+			name:  "retrieve keys from mount with single level",
+			mount: "team-b",
+			setupSecrets: map[string]map[string]string{
+				"team-b/database": {"host": "db.example.com"},
+				"team-b/api":      {"key": "api-key"},
+				"team-b/cache":    {"redis": "redis.example.com"},
+			},
+			expectedKeys: []string{"database", "api", "cache"},
+			expectError:  false,
+		},
+		{
+			name:         "empty mount returns empty list",
+			mount:        "team-c",
+			setupSecrets: map[string]map[string]string{},
+			expectedKeys: []string{},
+			expectError:  false,
+		},
+		{
+			name:        "non-existent mount returns error",
+			mount:       "non-existent",
+			expectError: true,
+			errorMsg:    "failed to get keys under mount non-existent",
+		},
+		{
+			name:        "empty mount parameter returns error",
+			mount:       "",
+			expectError: true,
+			errorMsg:    "mount cannot be empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			// Setup: Create secrets in main cluster only
+			for secretPath, secretData := range tc.setupSecrets {
+				_, err := suite.mainVault.WriteSecret(suite.ctx, tc.mount, secretPath, secretData)
+				suite.NoError(err, "Failed to write secret %s", secretPath)
+			}
+
+			// Create client
+			mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err, "Failed to create MultiClusterVaultClient")
+
+			// Test the function
+			keys, err := mclient.GetKeysUnderMount(suite.ctx, tc.mount)
+
+			if tc.expectError {
+				suite.Error(err, "Expected error for test case: %s", tc.name)
+				suite.ErrorContains(err, tc.errorMsg, "Expected error message to contain: %s", tc.errorMsg)
+			} else {
+				suite.NoError(err, "Expected no error for test case: %s", tc.name)
+				suite.ElementsMatch(tc.expectedKeys, keys, "Expected keys to match for test case: %s", tc.name)
+			}
+
+			// Cleanup: Remove secrets after test
+			for secretPath := range tc.setupSecrets {
+				suite.mainVault.DeleteSecret(suite.ctx, secretPath)
 			}
 		})
 	}
