@@ -10,7 +10,6 @@ import (
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/sony/gobreaker"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -22,8 +21,9 @@ import (
 
 type SyncedSecretRepositoryTestSuite struct {
 	suite.Suite
+	ctx      context.Context
 	pgHelper *testutil.PostgresHelper
-	repo     *PostgreSQLSyncedSecretRepository
+	db       *db.PostgresDatastore
 }
 
 func TestSyncedSecretRepositorySuite(t *testing.T) {
@@ -33,36 +33,34 @@ func TestSyncedSecretRepositorySuite(t *testing.T) {
 	suite.Run(t, new(SyncedSecretRepositoryTestSuite))
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) SetupSuite() {
+func (suite *SyncedSecretRepositoryTestSuite) SetupSuite() {
 	var err error
-	repoTest.pgHelper, err = testutil.NewPostgresContainer(repoTest.T(), context.Background())
-	require.NoError(repoTest.T(), err, "Failed to create Postgres test container")
+	suite.pgHelper, err = testutil.NewPostgresContainer(suite.T(), context.Background())
+	suite.NoError(err, "Failed to create Postgres test container")
 
-	psql, err := db.NewPostgresDatastore(*repoTest.pgHelper.Config, migrations.NewPostgresMigration())
-	require.NoError(repoTest.T(), err, "Failed to create PostgreSQLSyncedSecretRepository")
+	suite.db, err = db.NewPostgresDatastore(suite.pgHelper.Config, migrations.NewPostgresMigration())
+	suite.NoError(err, "Failed to create PostgreSQLSyncedSecretRepository")
 
-	repoTest.repo = NewPostgreSQLSyncedSecretRepository(psql)
+	suite.ctx = context.Background()
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) TearDownSuite() {
-	ctx := context.Background()
-	if repoTest.repo.psql.DB != nil {
-		err := repoTest.repo.psql.Close()
-		if err != nil {
-			log.Printf("Error closing datastore: %v", err)
-		}
-	}
-	if repoTest.pgHelper != nil {
-		err := repoTest.pgHelper.Terminate(ctx)
+func (suite *SyncedSecretRepositoryTestSuite) SetupTest() {
+	suite.pgHelper.Start(context.Background())
+	suite.pgHelper.ExecutePsqlCommand(context.Background(), "TRUNCATE TABLE synced_secrets")
+}
+
+func (suite *SyncedSecretRepositoryTestSuite) SetupSubTest() {
+	suite.pgHelper.Start(context.Background())
+	suite.pgHelper.ExecutePsqlCommand(context.Background(), "TRUNCATE TABLE synced_secrets")
+}
+
+func (suite *SyncedSecretRepositoryTestSuite) TearDownSuite() {
+	if suite.pgHelper != nil {
+		err := suite.pgHelper.Terminate(suite.ctx)
 		if err != nil {
 			log.Printf("Error terminating container: %v", err)
 		}
 	}
-}
-
-func (repoTest *SyncedSecretRepositoryTestSuite) SetupTest() {
-	_, err := repoTest.repo.psql.DB.Exec("TRUNCATE synced_secrets")
-	require.NoError(repoTest.T(), err, "Failed to truncate synced_secrets table")
 }
 
 type syncedSecretGetSecretTestCase struct {
@@ -75,7 +73,7 @@ type syncedSecretGetSecretTestCase struct {
 	expectedSecret     *models.SyncedSecret
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
+func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	successTime := now.Add(-1 * time.Minute)
 	secretToInsert := &models.SyncedSecret{
@@ -112,40 +110,37 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 	}
 
 	for _, tc := range testCases {
-		repoTest.T().Run(tc.name, func(t *testing.T) {
-			repoTest.SetupTest()
-			repoTest.insertTestSecret(*tc.secretToInsert)
+		suite.Run(tc.name, func() {
+			suite.insertTestSecret(tc.secretToInsert)
+			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
 
-			result, err := repoTest.repo.GetSyncedSecret(tc.backend, tc.path, tc.destinationCluster)
+			result, err := repo.GetSyncedSecret(tc.backend, tc.path, tc.destinationCluster)
 
 			if tc.expectedErr != nil {
-				assert.ErrorIs(t, err, tc.expectedErr, "Expected error does not match")
-				assert.Nil(t, result)
+				suite.ErrorIs(err, tc.expectedErr, "Expected error does not match")
+				suite.Nil(result)
 			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, result)
+				suite.NoError(err)
+				suite.NotNil(result)
 
-				assert.Equal(t, tc.expectedSecret.SecretBackend, result.SecretBackend)
-				assert.Equal(t, tc.expectedSecret.SecretPath, result.SecretPath)
-				assert.Equal(t, tc.expectedSecret.SourceVersion, result.SourceVersion)
-				assert.Equal(t, tc.expectedSecret.DestinationCluster, result.DestinationCluster)
-				assert.Equal(t, tc.expectedSecret.DestinationVersion, result.DestinationVersion)
-				assert.Equal(t, tc.expectedSecret.Status, result.Status)
-				assert.WithinDuration(t, tc.expectedSecret.LastSyncAttempt, result.LastSyncAttempt, time.Second)
+				suite.Equal(tc.expectedSecret.SecretBackend, result.SecretBackend)
+				suite.Equal(tc.expectedSecret.SecretPath, result.SecretPath)
+				suite.Equal(tc.expectedSecret.SourceVersion, result.SourceVersion)
+				suite.Equal(tc.expectedSecret.DestinationCluster, result.DestinationCluster)
+				suite.Equal(tc.expectedSecret.DestinationVersion, result.DestinationVersion)
+				suite.Equal(tc.expectedSecret.Status, result.Status)
+				suite.WithinDuration(tc.expectedSecret.LastSyncAttempt, result.LastSyncAttempt, time.Second)
 			}
 		})
 	}
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
-	repoTest.T().Run("returns all synced secrets", func(t *testing.T) {
-		repoTest.SetupTest()
-
+func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
+	suite.T().Run("returns all synced secrets", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Millisecond)
 		successTime := now.Add(-1 * time.Minute)
-		errorMsg := "test error"
 
-		secrets := []models.SyncedSecret{
+		secrets := []*models.SyncedSecret{
 			{
 				SecretBackend:      "zkv",
 				SecretPath:         "test/path1",
@@ -166,7 +161,7 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 				LastSyncAttempt:    now,
 				LastSyncSuccess:    nil,
 				Status:             "error",
-				ErrorMessage:       &errorMsg,
+				ErrorMessage:       nil,
 			},
 			{
 				SecretBackend:      "aws",
@@ -182,28 +177,30 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 		}
 
 		for _, secret := range secrets {
-			repoTest.insertTestSecret(secret)
+			suite.insertTestSecret(secret)
 		}
 
-		result, err := repoTest.repo.GetSyncedSecrets()
+		repo := NewPostgreSQLSyncedSecretRepository(suite.db)
 
-		assert.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.Len(t, result, len(secrets))
+		result, err := repo.GetSyncedSecrets()
 
-		assert.Equal(t, "aws", result[0].SecretBackend)
-		assert.Equal(t, "kv", result[1].SecretBackend)
-		assert.Equal(t, "zkv", result[2].SecretBackend)
+		suite.NoError(err)
+		suite.NotNil(result)
+		suite.Len(result, len(secrets))
+
+		suite.Equal("aws", result[0].SecretBackend)
+		suite.Equal("kv", result[1].SecretBackend)
+		suite.Equal("zkv", result[2].SecretBackend)
 	})
 
-	repoTest.T().Run("returns empty slice for no secrets without error", func(t *testing.T) {
-		repoTest.SetupTest()
+	suite.Run("returns empty slice for no secrets without error", func() {
+		repo := NewPostgreSQLSyncedSecretRepository(suite.db)
 
-		result, err := repoTest.repo.GetSyncedSecrets()
+		result, err := repo.GetSyncedSecrets()
 
-		assert.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.Len(t, result, 0)
+		suite.NoError(err)
+		suite.NotNil(result)
+		suite.Len(result, 0)
 	})
 }
 
@@ -215,7 +212,7 @@ type syncedSecretUpdateStatusTestCase struct {
 	shouldUpdateFields bool
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() {
+func (suite *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	successTime := now.Add(-1 * time.Minute)
 	errorMsg := "sync failed"
@@ -287,41 +284,40 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() 
 	}
 
 	for _, tc := range testCases {
-		repoTest.T().Run(tc.name, func(t *testing.T) {
-			repoTest.SetupTest()
-
+		suite.Run(tc.name, func() {
 			if tc.secretToInsert != nil {
-				repoTest.insertTestSecret(*tc.secretToInsert)
+				suite.insertTestSecret(tc.secretToInsert)
 			}
+			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
 
-			err := repoTest.repo.UpdateSyncedSecretStatus(tc.secretToUpdate)
+			err := repo.UpdateSyncedSecretStatus(tc.secretToUpdate)
 
 			if tc.expectedErr != nil {
-				assert.ErrorIs(t, err, tc.expectedErr, "Expected error does not match")
+				suite.ErrorIs(err, tc.expectedErr, "Expected error does not match")
 			} else {
-				assert.NoError(t, err, "Expected no error")
+				suite.NoError(err, "Expected no error")
 
 				if tc.shouldUpdateFields {
-					result, err := repoTest.repo.GetSyncedSecret(
+					result, err := repo.GetSyncedSecret(
 						tc.secretToUpdate.SecretBackend,
 						tc.secretToUpdate.SecretPath,
 						tc.secretToUpdate.DestinationCluster,
 					)
-					require.NoError(t, err, "Failed to retrieve updated secret")
+					suite.NoError(err, "Failed to retrieve updated secret")
 
-					assert.Equal(t, tc.secretToUpdate.SecretBackend, result.SecretBackend)
-					assert.Equal(t, tc.secretToUpdate.SecretPath, result.SecretPath)
-					assert.Equal(t, tc.secretToUpdate.SourceVersion, result.SourceVersion)
-					assert.Equal(t, tc.secretToUpdate.DestinationCluster, result.DestinationCluster)
-					assert.Equal(t, tc.secretToUpdate.DestinationVersion, result.DestinationVersion)
-					assert.Equal(t, tc.secretToUpdate.Status, result.Status)
-					assert.WithinDuration(t, tc.secretToUpdate.LastSyncAttempt, result.LastSyncAttempt, time.Second)
+					suite.Equal(tc.secretToUpdate.SecretBackend, result.SecretBackend)
+					suite.Equal(tc.secretToUpdate.SecretPath, result.SecretPath)
+					suite.Equal(tc.secretToUpdate.SourceVersion, result.SourceVersion)
+					suite.Equal(tc.secretToUpdate.DestinationCluster, result.DestinationCluster)
+					suite.Equal(tc.secretToUpdate.DestinationVersion, result.DestinationVersion)
+					suite.Equal(tc.secretToUpdate.Status, result.Status)
+					suite.WithinDuration(tc.secretToUpdate.LastSyncAttempt, result.LastSyncAttempt, time.Second)
 
 					if tc.secretToUpdate.LastSyncSuccess != nil {
-						assert.WithinDuration(t, *tc.secretToUpdate.LastSyncSuccess, *result.LastSyncSuccess, time.Second)
+						suite.WithinDuration(*tc.secretToUpdate.LastSyncSuccess, *result.LastSyncSuccess, time.Second)
 					}
 					if tc.secretToUpdate.ErrorMessage != nil {
-						assert.Equal(t, *tc.secretToUpdate.ErrorMessage, *result.ErrorMessage)
+						suite.Equal(*tc.secretToUpdate.ErrorMessage, *result.ErrorMessage)
 					}
 				}
 			}
@@ -329,174 +325,192 @@ func (repoTest *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() 
 	}
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRetry() {
-	newCircuitBreaker := func() *gobreaker.CircuitBreaker {
+func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRetry() {
+	newMockCircuitBreaker := func() *gobreaker.CircuitBreaker {
 		return gobreaker.NewCircuitBreaker(gobreaker.Settings{
 			Name:        "test_breaker",
-			MaxRequests: 3,
+			MaxRequests: 2,
 			Interval:    1 * time.Second,
-			Timeout:     1 * time.Second,
+			Timeout:     500 * time.Millisecond,
 			ReadyToTrip: func(counts gobreaker.Counts) bool {
 				return counts.TotalFailures >= 2
 			},
 		})
 	}
 
-	retryOpsFunc := func() []backoff.RetryOption {
-		strategyOpts := &backoff.ConstantBackOff{Interval: 50 * time.Millisecond}
-		maxRetires := backoff.WithMaxTries(1)
-		return []backoff.RetryOption{backoff.WithBackOff(strategyOpts), maxRetires}
+	// default retry limits is 10 so the test could take a while to run, hence, we use a shorter timeout
+	// and the retry limit to 1 to speed up the test
+	retryOpsMockFunc := func() []backoff.RetryOption {
+		strategyOpts := &backoff.ConstantBackOff{Interval: 100 * time.Millisecond}
+		return []backoff.RetryOption{
+			backoff.WithBackOff(strategyOpts),
+			backoff.WithMaxTries(1),
+		}
 	}
 
-	repoTest.T().Run("it automatically retry to send the query", func(t *testing.T) {
-		repoTest.repo = &PostgreSQLSyncedSecretRepository{
-			psql:           repoTest.repo.psql,
-			circuitBreaker: newCircuitBreaker(),
+	secret := models.SyncedSecret{
+		SecretBackend:      "kv",
+		SecretPath:         "test/path",
+		SourceVersion:      1,
+		DestinationCluster: "prod",
+		DestinationVersion: 1,
+		LastSyncAttempt:    time.Now().UTC(),
+		LastSyncSuccess:    nil,
+		Status:             "success",
+		ErrorMessage:       nil,
+	}
+
+	suite.Run("it automatically retry to send the query", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
 			retryOptFunc:   newBackoffStrategy,
 		}
-		repoTest.insertSecret("kv", "test", "prod")
+		suite.insertSecret("kv", "test", "prod")
 
 		// simulate a connection failure
-		repoTest.pgHelper.Stop(context.Background(), nil)
+		suite.pgHelper.Stop(context.Background(), nil)
 		go func() {
-			time.Sleep(2 * time.Second)
-			repoTest.pgHelper.Start(context.Background())
+			time.Sleep(1 * time.Second)
+			suite.pgHelper.Start(context.Background())
 		}()
 
-		result, err := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		result, err := repo.GetSyncedSecret("kv", "test", "prod")
 
-		assert.NoError(t, err, "Expected to retry and succeed after connection is restored")
-		assert.NotNil(t, result, "Expected to retrieve secret after retry")
+		suite.NoError(err, "Expected to retry and succeed after connection is restored")
+		suite.NotNil(result, "Expected to retrieve secret after retry")
 	})
 
-	repoTest.T().Run("it returns error if circuit breaker is open", func(t *testing.T) {
-		repoTest.repo = &PostgreSQLSyncedSecretRepository{
-			psql:           repoTest.repo.psql,
-			circuitBreaker: newCircuitBreaker(),
-			// default retry limits is 10 so the test could take a while to run, hence, we use a shorter timeout
-			// and the retry limit to 1 to speed up the test
-			retryOptFunc: retryOpsFunc,
+	suite.Run("it returns error if circuit breaker is open", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
+			retryOptFunc:   retryOpsMockFunc,
 		}
 
 		// simulate a connection failure
-		repoTest.pgHelper.Stop(context.Background(), nil)
+		suite.pgHelper.Stop(context.Background(), nil)
 
-		_, retryError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		_, retryError2 := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		_, circutError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError := repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError2 := repo.GetSyncedSecret("kv", "test", "prod")
+		_, circutError := repo.GetSyncedSecret("kv", "test", "prod")
 
-		assert.ErrorIs(t, retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 	})
 
-	repoTest.T().Run("circuit breaker affects GetSyncedSecrets", func(t *testing.T) {
-		repoTest.repo = &PostgreSQLSyncedSecretRepository{
-			psql:           repoTest.repo.psql,
-			circuitBreaker: newCircuitBreaker(),
-			retryOptFunc:   retryOpsFunc,
+	suite.Run("circuit breaker affects GetSyncedSecrets", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
+			retryOptFunc:   retryOpsMockFunc,
 		}
-		repoTest.pgHelper.Stop(context.Background(), nil)
+		suite.pgHelper.Stop(context.Background(), nil)
 
-		_, retryError := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		_, retryError2 := repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		_, circutError := repoTest.repo.GetSyncedSecrets()
+		_, retryError := repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError2 := repo.GetSyncedSecret("kv", "test", "prod")
+		_, circutError := repo.GetSyncedSecrets()
 
-		assert.ErrorIs(t, retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 	})
 
-	repoTest.T().Run("circuit breaker closed after time passes", func(t *testing.T) {
-		repoTest.pgHelper.Start(context.Background())
-		repoTest.SetupTest()
-		repoTest.insertRandomSecrets(5)
+	suite.Run("circuit breaker closed after time passes", func() {
+		suite.insertRandomSecrets(5)
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
+			retryOptFunc:   retryOpsMockFunc,
+		}
 
 		// trigger the circuit breaker to open
-		repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		repoTest.repo.GetSyncedSecret("kv", "test", "prod")
-		_, circutError := repoTest.repo.GetSyncedSecrets()
-		assert.ErrorIs(t, circutError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.pgHelper.Stop(context.Background(), nil)
+		_, retryError := repo.GetSyncedSecret("kv", "test", "prod")
+		_, retryError2 := repo.GetSyncedSecret("kv", "test", "prod")
+		suite.ErrorIs(retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+
+		suite.pgHelper.Start(context.Background())
+
+		_, circuitError := repo.GetSyncedSecrets()
+		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 
 		var err error
 		var result []models.SyncedSecret
-		assert.Eventually(t, func() bool {
-			result, err = repoTest.repo.GetSyncedSecrets()
+		suite.Eventually(func() bool {
+			result, err = repo.GetSyncedSecrets()
 			return err == nil && result != nil
-		}, 5*time.Second, 1*time.Second)
+		}, 3*time.Second, 1*time.Second)
 
-		assert.NoError(t, err, "Circuit breaker did not close after timeout")
-		assert.NotNil(t, result, "Expected to retrieve secret after circuit breaker closed")
-		assert.Len(t, result, 5, "Expected one secret to be returned after circuit breaker closed")
+		suite.NoError(err, "Circuit breaker did not close after timeout")
+		suite.NotNil(result, "Expected to retrieve secret after circuit breaker closed")
+		suite.Len(result, 5, "Expected one secret to be returned after circuit breaker closed")
 	})
 
-	repoTest.T().Run("circuit breaker opens on update failures", func(t *testing.T) {
-		repoTest.repo = &PostgreSQLSyncedSecretRepository{
-			psql:           repoTest.repo.psql,
-			circuitBreaker: newCircuitBreaker(),
-			retryOptFunc:   retryOpsFunc,
-		}
-
-		secret := models.SyncedSecret{
-			SecretBackend:      "kv",
-			SecretPath:         "test/path",
-			SourceVersion:      1,
-			DestinationCluster: "prod",
-			DestinationVersion: 1,
-			LastSyncAttempt:    time.Now().UTC(),
-			LastSyncSuccess:    nil,
-			Status:             "success",
-			ErrorMessage:       nil,
+	suite.Run("circuit breaker opens on update failures", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
+			retryOptFunc:   retryOpsMockFunc,
 		}
 
 		// simulate a connection failure
-		repoTest.pgHelper.Stop(context.Background(), nil)
+		suite.pgHelper.Stop(context.Background(), nil)
 
-		retryError1 := repoTest.repo.UpdateSyncedSecretStatus(secret)
-		retryError2 := repoTest.repo.UpdateSyncedSecretStatus(secret)
-		circuitError := repoTest.repo.UpdateSyncedSecretStatus(secret)
+		retryError1 := repo.UpdateSyncedSecretStatus(secret)
+		retryError2 := repo.UpdateSyncedSecretStatus(secret)
+		circuitError := repo.UpdateSyncedSecretStatus(secret)
 
-		assert.ErrorIs(t, retryError1, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		assert.ErrorIs(t, circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(retryError1, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 	})
 
-	repoTest.T().Run("circuit breaker recovers after connection restored", func(t *testing.T) {
-		repoTest.pgHelper.Start(context.Background())
-		repoTest.SetupTest()
-
-		secret := models.SyncedSecret{
-			SecretBackend:      "kv",
-			SecretPath:         "test/recovery",
-			SourceVersion:      1,
-			DestinationCluster: "prod",
-			DestinationVersion: 1,
-			LastSyncAttempt:    time.Now().UTC(),
-			LastSyncSuccess:    nil,
-			Status:             "success",
-			ErrorMessage:       nil,
+	suite.Run("circuit breaker recovers after connection restored on update", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: newMockCircuitBreaker(),
+			retryOptFunc:   retryOpsMockFunc,
 		}
 
-		circuitError := repoTest.repo.UpdateSyncedSecretStatus(secret)
-		assert.ErrorIs(t, circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		// simulate a connection failure
+		suite.pgHelper.Stop(context.Background(), nil)
+		retryError1 := repo.UpdateSyncedSecretStatus(secret)
+		retryError2 := repo.UpdateSyncedSecretStatus(secret)
+		circuitError := repo.UpdateSyncedSecretStatus(secret)
+		suite.ErrorIs(retryError1, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+
+		// restore the connection
+		suite.pgHelper.Start(context.Background())
 
 		var err error
-		assert.Eventually(t, func() bool {
-			err = repoTest.repo.UpdateSyncedSecretStatus(secret)
+		suite.Eventually(func() bool {
+			err = repo.UpdateSyncedSecretStatus(secret)
 			return err == nil
-		}, 5*time.Second, 1*time.Second)
+		}, 3*time.Second, 1*time.Second)
 
-		assert.NoError(t, err, "Circuit breaker did not close after timeout")
+		suite.NoError(err, "Circuit breaker did not close after timeout")
 
-		result, err := repoTest.repo.GetSyncedSecret("kv", "test/recovery", "prod")
-		assert.NoError(t, err, "Failed to retrieve updated secret")
-		assert.Equal(t, "success", result.Status.String(), "Expected secret status to be 'success'")
+		result, err := repo.GetSyncedSecret(secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
+
+		suite.NoError(err, "Failed to retrieve updated secret")
+		suite.Equal(secret.SecretBackend, result.SecretBackend, "Expected secret backend to match")
+		suite.Equal(secret.SecretPath, result.SecretPath, "Expected secret path to match")
+		suite.Equal(secret.DestinationCluster, result.DestinationCluster, "Expected destination cluster to match")
+		suite.Equal(secret.DestinationVersion, result.DestinationVersion, "Expected destination version to match")
+		suite.Equal(secret.SourceVersion, result.SourceVersion, "Expected source version to match")
+		suite.Equal(secret.Status, result.Status, "Expected status to match")
+		suite.WithinDuration(secret.LastSyncAttempt, result.LastSyncAttempt, time.Second, "Expected last sync attempt to match")
 	})
 }
 
 // test helper functions
-func (repoTest *SyncedSecretRepositoryTestSuite) insertSecret(backend, path, cluster string) {
-	secret := models.SyncedSecret{
+func (suite *SyncedSecretRepositoryTestSuite) insertSecret(backend, path, cluster string) {
+	secret := &models.SyncedSecret{
 		SecretBackend:      backend,
 		SecretPath:         path,
 		SourceVersion:      1,
@@ -507,16 +521,16 @@ func (repoTest *SyncedSecretRepositoryTestSuite) insertSecret(backend, path, clu
 		Status:             "success",
 		ErrorMessage:       nil,
 	}
-	repoTest.insertTestSecret(secret)
+	suite.insertTestSecret(secret)
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) insertRandomSecrets(count int) {
+func (suite *SyncedSecretRepositoryTestSuite) insertRandomSecrets(count int) {
 	for i := 0; i < count; i++ {
-		repoTest.insertSecret("kv", fmt.Sprintf("test/path/%d", i+1), "prod")
+		suite.insertSecret("kv", fmt.Sprintf("test/path/%d", i+1), "prod")
 	}
 }
 
-func (repoTest *SyncedSecretRepositoryTestSuite) insertTestSecret(secret models.SyncedSecret) {
+func (suite *SyncedSecretRepositoryTestSuite) insertTestSecret(secret *models.SyncedSecret) {
 	query := `
         INSERT INTO synced_secrets (
             secret_backend,
@@ -531,7 +545,7 @@ func (repoTest *SyncedSecretRepositoryTestSuite) insertTestSecret(secret models.
         ) VALUES (:secret_backend, :secret_path, :source_version, :destination_cluster, :destination_version, :last_sync_attempt, :last_sync_success, :status, :error_message)
     `
 
-	_, err := repoTest.repo.psql.DB.NamedExec(query, secret)
+	_, err := suite.db.DB.NamedExec(query, secret)
 
-	require.NoError(repoTest.T(), err, "Failed to insert test secret")
+	require.NoError(suite.T(), err, "Failed to insert test secret")
 }
