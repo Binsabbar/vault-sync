@@ -3,6 +3,8 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"time"
 
@@ -10,10 +12,12 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"vault-sync/internal/config"
+	"vault-sync/pkg/log"
 )
 
 type PostgresHelper struct {
@@ -107,4 +111,20 @@ func (p *PostgresHelper) Start(ctx context.Context) error {
 		return p.Container.Start(ctx)
 	}
 	return nil
+}
+
+func (p *PostgresHelper) ExecutePsqlCommand(ctx context.Context, sqlCommand string) (string, error) {
+	command := fmt.Sprintf(`psql -U %s -d %s -c "%s"`, p.Config.Username, p.Config.DBName, sqlCommand)
+
+	_, output, err := p.Container.Exec(ctx, []string{"sh", "-c", command}, exec.Multiplexed())
+	if err != nil {
+		return "", fmt.Errorf("failed to execute command %q in PSQL container: %w", command, err)
+	}
+
+	byteOutput, _ := io.ReadAll(output)
+	if os.Getenv("DEBUG_TESTCONTAINERS") != "" {
+		log.Logger.Info().Str("command", command).Msg("Executing PSQL command")
+		log.Logger.Info().Str("output", string(byteOutput)).Msg("PSQL command output")
+	}
+	return string(byteOutput), nil
 }
