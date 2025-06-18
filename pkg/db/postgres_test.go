@@ -90,7 +90,7 @@ func (suite *PostgresDatastoreTestSuite) TestNewPostgresDatastore() {
 		cfg.MaxConnections = 5
 		store, err := NewPostgresDatastore(cfg, postgresMigrator)
 		suite.NoError(err, "Should create datastore without error")
-å
+
 		got := store.DB.Stats().MaxOpenConnections
 
 		suite.Equal(cfg.MaxConnections, got, "MaxOpenConnections should match config.MaxConnections")
