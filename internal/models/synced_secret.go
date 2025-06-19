@@ -13,9 +13,9 @@ const (
 type SyncedSecret struct {
 	SecretBackend      string     `db:"secret_backend"`
 	SecretPath         string     `db:"secret_path"`
-	SourceVersion      int        `db:"source_version"`
+	SourceVersion      int64      `db:"source_version"`
 	DestinationCluster string     `db:"destination_cluster"`
-	DestinationVersion int        `db:"destination_version"`
+	DestinationVersion int64      `db:"destination_version"`
 	LastSyncAttempt    time.Time  `db:"last_sync_attempt"`
 	LastSyncSuccess    *time.Time `db:"last_sync_success"`
 	Status             SyncStatus `db:"status"`
