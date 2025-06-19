@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"vault-sync/internal/config"
+	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
 	"vault-sync/pkg/log"
 
@@ -116,30 +117,6 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 	return reauthenticate("Could not determine token TTL, re-authenticating", 0, nil)
 }
 
-// getExistingMounts retrieves the existing secret mounts from Vault
-// It returns a map where keys are mount paths and values are true.
-// The mount paths are cleaned to remove trailing slashes.
-func (cm *clusterManager) getExistingMounts(ctx context.Context) (map[string]bool, error) {
-	resp, err := cm.client.System.MountsListSecretsEngines(ctx)
-	if err != nil {
-		cm.decorateLog(log.Logger.Error, "get_existing_mounts").
-			Err(err).
-			Msg("Failed to list secret engines")
-		return nil, fmt.Errorf("failed to list secret engines: %w", err)
-	}
-
-	existingMounts := make(map[string]bool)
-	for mountPath := range resp.Data {
-		cleanMountPath := strings.TrimSuffix(mountPath, "/")
-		existingMounts[cleanMountPath] = true
-	}
-
-	cm.decorateLog(log.Logger.Debug, "get_existing_mounts").
-		Strs("mount_paths", converter.MapKeysToSlice(existingMounts)).
-		Msg("Found existing mounts")
-	return existingMounts, nil
-}
-
 // checkMounts checks if the specified mounts exist in the Vault cluster.
 // It returns a slice of missing mounts if any are not found.
 func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, mounts []string) ([]string, error) {
@@ -172,6 +149,30 @@ func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, m
 		return missingMounts, nil
 	}
 	return nil, nil
+}
+
+// getExistingMounts retrieves the existing secret mounts from Vault
+// It returns a map where keys are mount paths and values are true.
+// The mount paths are cleaned to remove trailing slashes.
+func (cm *clusterManager) getExistingMounts(ctx context.Context) (map[string]bool, error) {
+	resp, err := cm.client.System.MountsListSecretsEngines(ctx)
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "get_existing_mounts").
+			Err(err).
+			Msg("Failed to list secret engines")
+		return nil, fmt.Errorf("failed to list secret engines: %w", err)
+	}
+
+	existingMounts := make(map[string]bool)
+	for mountPath := range resp.Data {
+		cleanMountPath := strings.TrimSuffix(mountPath, "/")
+		existingMounts[cleanMountPath] = true
+	}
+
+	cm.decorateLog(log.Logger.Debug, "get_existing_mounts").
+		Strs("mount_paths", converter.MapKeysToSlice(existingMounts)).
+		Msg("Found existing mounts")
+	return existingMounts, nil
 }
 
 // fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
@@ -246,6 +247,52 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 	}
 
 	return nil
+}
+
+// fetchSecretMetadata retrieves metadata for a secret at the given mount and key path
+func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPath string) (*models.VaultSecretMetadata, error) {
+	if err := cm.ensureValidToken(ctx); err != nil {
+		cm.decorateLog(log.Logger.Error, "fetch_secret_metadata").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to ensure valid token")
+		return nil, err
+	}
+
+	cm.decorateLog(log.Logger.Debug, "fetch_secret_metadata").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Msg("Fetching secret metadata")
+
+	resp, err := cm.client.Secrets.KvV2ReadMetadata(ctx, keyPath, vault.WithMountPath(mount))
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "fetch_secret_metadata").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to read secret metadata")
+		return nil, fmt.Errorf("failed to read metadata from %s: %w", keyPath, err)
+	}
+
+	metadata, err := models.ParseKvV2ReadMetadataResponseToVaultSecretMetadata(resp.Data)
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "fetch_secret_metadata").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to parse secret metadata")
+		return nil, fmt.Errorf("failed to parse metadata for %s/%s: %w", mount, keyPath, err)
+	}
+
+	cm.decorateLog(log.Logger.Debug, "fetch_secret_metadata").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Int64("current_version", metadata.CurrentVersion).
+		Int("version_count", len(metadata.Versions)).
+		Msg("Successfully fetched secret metadata")
+
+	return metadata, nil
 }
 
 // decorateLog adds common fields to the log event for cluster manager operations

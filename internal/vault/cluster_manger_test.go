@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"vault-sync/internal/config"
 	"vault-sync/testutil"
@@ -74,5 +75,47 @@ func (suite *ClusterManagerTestSuite) TestEnsureValidToken() {
 		err := clusterManager.ensureValidToken(suite.ctx)
 
 		suite.NoError(err)
+	})
+
+	suite.Run("all methods check token before use", func() {
+		type MethodsTestData struct {
+			name         string
+			invokeMethod func(cm *clusterManager) error
+		}
+		methodsToCheck := []MethodsTestData{
+			{
+				name: "checkMounts",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.checkMounts(suite.ctx, "main", []string{"my-mount"})
+					return err
+				},
+			},
+			{
+				name: "fetchKeysUnderMount",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.fetchKeysUnderMount(suite.ctx, "my-mount")
+					return err
+				},
+			},
+			{
+				name: "fetchSecretMetadata",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.fetchSecretMetadata(suite.ctx, "my-mount", "my-secret")
+					return err
+				},
+			},
+		}
+		for _, method := range methodsToCheck {
+			suite.Run(fmt.Sprintf("returns error for method %s if token not valid", method.name), func() {
+				clusterManager, _ := newClusterManager(suite.cfg)
+				clusterManager.config.AppRoleID = "invalid-role"
+				clusterManager.client.SetToken("invalid-token")
+
+				err := method.invokeMethod(clusterManager)
+
+				suite.Error(err, "Expected error when invoking method with invalid token")
+				suite.Contains(err.Error(), "failed to authenticate", "Expected token invalid error")
+			})
+		}
 	})
 }
