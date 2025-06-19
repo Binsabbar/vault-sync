@@ -128,7 +128,7 @@ func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, m
 		return nil, err
 	}
 
-	existingMounts, err := cm.getExistingMounts(ctx)
+	existingMounts, err := cm.retrieveSecretEngineMounts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -151,10 +151,10 @@ func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, m
 	return nil, nil
 }
 
-// getExistingMounts retrieves the existing secret mounts from Vault
+// retrieveSecretEngineMounts retrieves the existing secret mounts from Vault
 // It returns a map where keys are mount paths and values are true.
 // The mount paths are cleaned to remove trailing slashes.
-func (cm *clusterManager) getExistingMounts(ctx context.Context) (map[string]bool, error) {
+func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[string]bool, error) {
 	resp, err := cm.client.System.MountsListSecretsEngines(ctx)
 	if err != nil {
 		cm.decorateLog(log.Logger.Error, "get_existing_mounts").
