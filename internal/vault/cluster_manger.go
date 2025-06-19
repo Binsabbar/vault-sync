@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 	"vault-sync/internal/config"
-	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
 	"vault-sync/pkg/log"
 
@@ -250,7 +249,7 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 }
 
 // fetchSecretMetadata retrieves metadata for a secret at the given mount and key path
-func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPath string) (*models.VaultSecretMetadata, error) {
+func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error) {
 	if err := cm.ensureValidToken(ctx); err != nil {
 		cm.decorateLog(log.Logger.Error, "fetch_secret_metadata").
 			Err(err).
@@ -275,7 +274,7 @@ func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPat
 		return nil, fmt.Errorf("failed to read metadata from %s: %w", keyPath, err)
 	}
 
-	metadata, err := models.ParseKvV2ReadMetadataResponseToVaultSecretMetadata(resp.Data)
+	metadata, err := parseVaultSecretMetadataResponse(resp)
 	if err != nil {
 		cm.decorateLog(log.Logger.Error, "fetch_secret_metadata").
 			Err(err).
@@ -293,6 +292,87 @@ func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPat
 		Msg("Successfully fetched secret metadata")
 
 	return metadata, nil
+}
+
+// readSecret reads secret data from the cluster
+func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string) (*VaultSecretResponse, error) {
+	if err := cm.ensureValidToken(ctx); err != nil {
+		cm.decorateLog(log.Logger.Error, "read_secret").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to ensure valid token")
+		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
+	cm.decorateLog(log.Logger.Debug, "read_secret").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Msg("Reading secret from cluster")
+
+	res, err := cm.client.Secrets.KvV2Read(ctx, keyPath, vault.WithMountPath(mount))
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "read_secret").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to read secret")
+		return nil, fmt.Errorf("failed to read secret from %s: %w", keyPath, err)
+	}
+
+	secretResponse, err := parseVaultSecretResponse(res)
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "read_secret").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to parse secret response")
+		return nil, fmt.Errorf("failed to parse secret response from %s: %w", keyPath, err)
+	}
+
+	cm.decorateLog(log.Logger.Debug, "read_secret").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Int64("version", secretResponse.Metadata.Version).
+		Msg("Successfully read secret")
+
+	return secretResponse, nil
+}
+
+// writeSecret writes secret data to the cluster and returns the new version
+func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string, data map[string]interface{}) (int64, error) {
+	if err := cm.ensureValidToken(ctx); err != nil {
+		cm.decorateLog(log.Logger.Error, "write_secret").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to ensure valid token")
+		return 0, fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
+	cm.decorateLog(log.Logger.Debug, "write_secret").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Msg("Writing secret to cluster")
+
+	writeRequest := schema.KvV2WriteRequest{Data: data}
+	res, err := cm.client.Secrets.KvV2Write(ctx, keyPath, writeRequest, vault.WithMountPath(mount))
+	if err != nil {
+		cm.decorateLog(log.Logger.Error, "write_secret").
+			Err(err).
+			Str("mount", mount).
+			Str("key_path", keyPath).
+			Msg("Failed to write secret")
+		return -1, fmt.Errorf("failed to write secret to %s/%s: %w", mount, keyPath, err)
+	}
+
+	cm.decorateLog(log.Logger.Info, "write_secret").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Int64("version", res.Data.Version).
+		Msg("Successfully wrote secret to cluster")
+
+	return res.Data.Version, nil
 }
 
 // decorateLog adds common fields to the log event for cluster manager operations
