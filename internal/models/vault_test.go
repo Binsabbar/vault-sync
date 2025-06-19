@@ -30,8 +30,8 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime,
 				Versions: map[string]interface{}{
 					"1": map[string]interface{}{
-						"created_time":  baseTime,
-						"deletion_time": time.Time{},
+						"created_time":  "2025-06-19T07:40:04.696796386Z",
+						"deletion_time": "2025-06-19T07:40:04.696796386Z",
 						"destroyed":     false,
 					},
 				},
@@ -44,8 +44,41 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime,
 				Versions: map[string]VaultSecretVersion{
 					"1": {
-						CreatedTime:  baseTime,
-						DeletionTime: time.Time{},
+						CreatedTime:  time.Date(2025, 6, 19, 7, 40, 4, 696796386, time.UTC),
+						DeletionTime: func() *time.Time { t := time.Date(2025, 6, 19, 7, 40, 4, 696796386, time.UTC); return &t }(),
+						Destroyed:    false,
+						Version:      "1",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "successful parsing if deletion_time is empty",
+			input: schema.KvV2ReadMetadataResponse{
+				CurrentVersion: 1,
+				MaxVersions:    10,
+				OldestVersion:  1,
+				CreatedTime:    baseTime,
+				UpdatedTime:    baseTime,
+				Versions: map[string]interface{}{
+					"1": map[string]interface{}{
+						"created_time":  "2025-06-19T07:40:04.696796386Z",
+						"deletion_time": "",
+						"destroyed":     false,
+					},
+				},
+			},
+			expected: &VaultSecretMetadata{
+				CurrentVersion: 1,
+				MaxVersions:    10,
+				OldestVersion:  1,
+				CreatedTime:    baseTime,
+				UpdatedTime:    baseTime,
+				Versions: map[string]VaultSecretVersion{
+					"1": {
+						CreatedTime:  time.Date(2025, 6, 19, 7, 40, 4, 696796386, time.UTC),
+						DeletionTime: nil,
 						Destroyed:    false,
 						Version:      "1",
 					},
@@ -63,18 +96,18 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime.Add(2 * time.Hour),
 				Versions: map[string]interface{}{
 					"1": map[string]interface{}{
-						"created_time":  baseTime,
-						"deletion_time": time.Time{},
-						"destroyed":     false,
+						"created_time":  "2025-06-14T07:40:04.696796386Z",
+						"deletion_time": "2025-06-15T07:40:04.696796386Z",
+						"destroyed":     true,
 					},
 					"2": map[string]interface{}{
-						"created_time":  baseTime.Add(1 * time.Hour),
-						"deletion_time": time.Time{},
+						"created_time":  "2025-06-15T07:40:04.696796386Z",
+						"deletion_time": "2025-06-16T07:40:04.696796386Z",
 						"destroyed":     false,
 					},
 					"3": map[string]interface{}{
-						"created_time":  baseTime.Add(2 * time.Hour),
-						"deletion_time": time.Time{},
+						"created_time":  "2025-06-18T07:40:04.696796386Z",
+						"deletion_time": "2025-06-19T07:40:04.696796386Z",
 						"destroyed":     false,
 					},
 				},
@@ -87,66 +120,22 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime.Add(2 * time.Hour),
 				Versions: map[string]VaultSecretVersion{
 					"1": {
-						CreatedTime:  baseTime,
-						DeletionTime: time.Time{},
-						Destroyed:    false,
-						Version:      "1",
-					},
-					"2": {
-						CreatedTime:  baseTime.Add(1 * time.Hour),
-						DeletionTime: time.Time{},
-						Destroyed:    false,
-						Version:      "2",
-					},
-					"3": {
-						CreatedTime:  baseTime.Add(2 * time.Hour),
-						DeletionTime: time.Time{},
-						Destroyed:    false,
-						Version:      "3",
-					},
-				},
-			},
-			expectError: false,
-		},
-		{
-			name: "successful parsing with destroyed version",
-			input: schema.KvV2ReadMetadataResponse{
-				CurrentVersion: 2,
-				MaxVersions:    10,
-				OldestVersion:  1,
-				CreatedTime:    baseTime,
-				UpdatedTime:    baseTime.Add(1 * time.Hour),
-				Versions: map[string]interface{}{
-					"1": map[string]interface{}{
-						"created_time":  baseTime,
-						"deletion_time": baseTime.Add(30 * time.Minute),
-						"destroyed":     true,
-					},
-					"2": map[string]interface{}{
-						"created_time":  baseTime.Add(1 * time.Hour),
-						"deletion_time": time.Time{},
-						"destroyed":     false,
-					},
-				},
-			},
-			expected: &VaultSecretMetadata{
-				CurrentVersion: 2,
-				MaxVersions:    10,
-				OldestVersion:  1,
-				CreatedTime:    baseTime,
-				UpdatedTime:    baseTime.Add(1 * time.Hour),
-				Versions: map[string]VaultSecretVersion{
-					"1": {
-						CreatedTime:  baseTime,
-						DeletionTime: baseTime.Add(30 * time.Minute),
+						CreatedTime:  time.Date(2025, 6, 14, 7, 40, 4, 696796386, time.UTC),
+						DeletionTime: func() *time.Time { t := time.Date(2025, 6, 15, 7, 40, 4, 696796386, time.UTC); return &t }(),
 						Destroyed:    true,
 						Version:      "1",
 					},
 					"2": {
-						CreatedTime:  baseTime.Add(1 * time.Hour),
-						DeletionTime: time.Time{},
+						CreatedTime:  time.Date(2025, 6, 15, 7, 40, 4, 696796386, time.UTC),
+						DeletionTime: func() *time.Time { t := time.Date(2025, 6, 16, 7, 40, 4, 696796386, time.UTC); return &t }(),
 						Destroyed:    false,
 						Version:      "2",
+					},
+					"3": {
+						CreatedTime:  time.Date(2025, 6, 18, 7, 40, 4, 696796386, time.UTC),
+						DeletionTime: func() *time.Time { t := time.Date(2025, 6, 19, 7, 40, 4, 696796386, time.UTC); return &t }(),
+						Destroyed:    false,
+						Version:      "3",
 					},
 				},
 			},
@@ -205,7 +194,7 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				Versions: map[string]interface{}{
 					"1": map[string]interface{}{
 						"created_time":  "invalid-time-string",
-						"deletion_time": time.Time{},
+						"deletion_time": "2025-06-19T07:40:04.696796386Z",
 						"destroyed":     false,
 					},
 				},
@@ -223,7 +212,7 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime,
 				Versions: map[string]interface{}{
 					"1": map[string]interface{}{
-						"created_time":  time.Time{},
+						"created_time":  "2025-06-19T07:40:04.696796386Z",
 						"deletion_time": "invalid-time-string",
 						"destroyed":     false,
 					},
@@ -242,8 +231,8 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 				UpdatedTime:    baseTime,
 				Versions: map[string]interface{}{
 					"1": map[string]interface{}{
-						"created_time":  time.Time{},
-						"deletion_time": time.Time{},
+						"created_time":  "2025-06-19T07:40:04.696796386Z",
+						"deletion_time": "2025-06-19T07:40:04.696796386Z",
 						"destroyed":     "not_correct_type",
 					},
 				},
