@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"vault-sync/internal/config"
+	"vault-sync/internal/models"
 	"vault-sync/testutil"
 )
 
@@ -54,7 +56,8 @@ func (suite *MultiClusterVaultClientTestSuite) BeforeTest(suiteName, testName st
 	case
 		"TestCreateNewMultiClusterClient",
 		"TestGetSecretMounts",
-		"TestGetKeysUnderMount":
+		"TestGetKeysUnderMount",
+		"TestGetSecretMetadata":
 		suite.mainConfig, suite.replicaConfig = suite.setupMultiClusterVaultClientTestSuite()
 	}
 }
@@ -96,13 +99,6 @@ func TestMultiClusterVaultClientSuite(t *testing.T) {
 	}
 
 	suite.Run(t, new(MultiClusterVaultClientTestSuite))
-}
-
-type vaultAuthenticationTestCase struct {
-	name          string
-	clusterName   string
-	expectedErr   error
-	shouldSucceed bool
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient() {
@@ -148,7 +144,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient()
 func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMounts() {
 	suite.mainVault.EnableKVv2Mounts(suite.ctx, "common", "main_cluster_mount")
 	suite.replica1Vault.EnableKVv2Mounts(suite.ctx, "common")
-	type mountTestCase struct {
+	type getSecretMountsTestCase struct {
 		name           string
 		secretPaths    []string
 		expectedMounts []string
@@ -156,7 +152,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMounts() {
 		errorMsg       string
 	}
 
-	testCases := []mountTestCase{
+	testCases := []getSecretMountsTestCase{
 		{
 			name:           "mounts exist in all clusters",
 			secretPaths:    []string{"team-a/myapp/database", "team-b/myapp/config"},
@@ -218,7 +214,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMounts() {
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
-	type keyTestCase struct {
+	type getKeysUnderMountTestCase struct {
 		name         string
 		mount        string
 		setupSecrets map[string]map[string]string // path -> secret data
@@ -227,7 +223,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 		errorMsg     string
 	}
 
-	testCases := []keyTestCase{
+	testCases := []getKeysUnderMountTestCase{
 		{
 			name:  "retrieve keys from mount with nested structure",
 			mount: "team-a",
@@ -307,6 +303,128 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 			// Cleanup: Remove secrets after test
 			for secretPath := range tc.setupSecrets {
 				suite.mainVault.DeleteSecret(suite.ctx, secretPath)
+			}
+		})
+	}
+}
+
+func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
+	ctx := context.Background()
+	type getSecretMetadataTestCase struct {
+		name           string
+		mount          string
+		keyPath        string
+		setupSecrets   map[string]map[string]string // version -> secret data
+		expectError    bool
+		errorMsg       string
+		validateResult func(*MultiClusterVaultClientTestSuite, *models.VaultSecretMetadata)
+	}
+
+	testCases := []getSecretMetadataTestCase{
+		{
+			name:    "retrieve metadata for existing secret with single version",
+			mount:   "team-a",
+			keyPath: "app1/database",
+			setupSecrets: map[string]map[string]string{
+				"v1": {"host": "db1.example.com", "password": "secret1"},
+			},
+			expectError: false,
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *models.VaultSecretMetadata) {
+				suite.Equal(int64(1), metadata.CurrentVersion)
+				suite.Len(metadata.Versions, 1)
+				suite.Contains(metadata.Versions, "1")
+				suite.False(metadata.Versions["1"].Destroyed)
+				suite.NotZero(metadata.CreatedTime)
+				suite.NotZero(metadata.UpdatedTime)
+			},
+		},
+		{
+			name:    "retrieve metadata for secret with multiple versions",
+			mount:   "team-a",
+			keyPath: "app1/api",
+			setupSecrets: map[string]map[string]string{
+				"v1": {"key": "api-key-v1"},
+				"v2": {"key": "api-key-v2", "env": "production"},
+				"v3": {"key": "api-key-v3", "env": "production", "rate_limit": "1000"},
+			},
+			expectError: false,
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *models.VaultSecretMetadata) {
+				suite.Equal(int64(3), metadata.CurrentVersion)
+				suite.Len(metadata.Versions, 3)
+				suite.Contains(metadata.Versions, "1")
+				suite.Contains(metadata.Versions, "2")
+				suite.Contains(metadata.Versions, "3")
+
+				// Verify version ordering
+				v1Time := metadata.Versions["1"].CreatedTime
+				v2Time := metadata.Versions["2"].CreatedTime
+				v3Time := metadata.Versions["3"].CreatedTime
+				suite.True(v1Time.Before(v2Time) || v1Time.Equal(v2Time))
+				suite.True(v2Time.Before(v3Time) || v2Time.Equal(v3Time))
+			},
+		},
+		{
+			name:    "nested path secret metadata",
+			mount:   "team-b",
+			keyPath: "infrastructure/k8s/prod/secrets",
+			setupSecrets: map[string]map[string]string{
+				"v1": {"cluster": "prod-cluster", "namespace": "default"},
+			},
+			expectError: false,
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *models.VaultSecretMetadata) {
+				suite.Equal(int64(1), metadata.CurrentVersion)
+				suite.Len(metadata.Versions, 1)
+			},
+		},
+		{
+			name:        "non-existent secret returns error",
+			mount:       "team-a",
+			keyPath:     "non-existent/secret",
+			expectError: true,
+			errorMsg:    "failed to read metadata",
+		},
+		{
+			name:        "empty mount parameter returns error",
+			mount:       "",
+			keyPath:     "some/path",
+			expectError: true,
+			errorMsg:    "mount cannot be empty",
+		},
+		{
+			name:        "empty key path parameter returns error",
+			mount:       "team-a",
+			keyPath:     "",
+			expectError: true,
+			errorMsg:    "key path cannot be empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			for version, secretData := range tc.setupSecrets {
+				_, err := suite.mainVault.WriteSecret(ctx, tc.mount, tc.keyPath, secretData)
+				suite.NoError(err, "Failed to write secret %s version %s", tc.keyPath, version)
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			mclient, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err, "Failed to create MultiClusterVaultClient")
+
+			metadata, err := mclient.GetSecretMetadata(ctx, tc.mount, tc.keyPath)
+
+			if tc.expectError {
+				suite.Error(err, "Expected error for test case: %s", tc.name)
+				suite.ErrorContains(err, tc.errorMsg, "Expected error message to contain: %s", tc.errorMsg)
+			} else {
+				suite.NoError(err, "Expected no error for test case: %s", tc.name)
+				suite.NotNil(metadata, "Expected metadata to be returned")
+				tc.validateResult(suite, metadata)
+			}
+
+			// Cleanup: Remove secrets after test
+			if len(tc.setupSecrets) > 0 {
+				secretPath := fmt.Sprintf("%s/%s", tc.mount, tc.keyPath)
+				suite.mainVault.DeleteSecret(ctx, secretPath)
 			}
 		})
 	}
