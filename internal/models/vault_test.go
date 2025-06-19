@@ -195,7 +195,7 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "invalid field type in version data",
+			name: "invalid field type in created_time",
 			input: schema.KvV2ReadMetadataResponse{
 				CurrentVersion: 1,
 				MaxVersions:    10,
@@ -212,6 +212,44 @@ func TestParseKvV2ReadMetadataResponseToVaultSecretMetadata(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "failed to parse created_time as time.Time",
+		},
+		{
+			name: "invalid field type in deletion_time",
+			input: schema.KvV2ReadMetadataResponse{
+				CurrentVersion: 1,
+				MaxVersions:    10,
+				OldestVersion:  1,
+				CreatedTime:    baseTime,
+				UpdatedTime:    baseTime,
+				Versions: map[string]interface{}{
+					"1": map[string]interface{}{
+						"created_time":  time.Time{},
+						"deletion_time": "invalid-time-string",
+						"destroyed":     false,
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "failed to parse deletion_time as time.Time",
+		},
+		{
+			name: "invalid field type in version data",
+			input: schema.KvV2ReadMetadataResponse{
+				CurrentVersion: 1,
+				MaxVersions:    10,
+				OldestVersion:  1,
+				CreatedTime:    baseTime,
+				UpdatedTime:    baseTime,
+				Versions: map[string]interface{}{
+					"1": map[string]interface{}{
+						"created_time":  time.Time{},
+						"deletion_time": time.Time{},
+						"destroyed":     "not_correct_type",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "failed to parse destroyed as bool",
 		},
 	}
 
