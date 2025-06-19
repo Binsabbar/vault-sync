@@ -8,6 +8,7 @@ import (
 
 	"sync"
 	"vault-sync/internal/config"
+	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
 	"vault-sync/pkg/log"
 )
@@ -102,6 +103,42 @@ func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount 
 		Msg("Successfully retrieved keys from main cluster")
 
 	return keys, nil
+}
+
+// GetSecretMetadata retrieves metadata for a secret at the given mount and key path from the main cluster.
+// This operation is only performed on the main cluster as it's used for discovery and version management.
+// Returns metadata including version information, creation time, and deletion status.
+func (mc *MultiClusterVaultClient) GetSecretMetadata(ctx context.Context, mount, keyPath string) (*models.VaultSecretMetadata, error) {
+	if mount == "" {
+		log.Logger.Error().Str("event", "get_secret_metadata").Msg("Mount cannot be empty")
+		return nil, fmt.Errorf("mount cannot be empty")
+	}
+	if keyPath == "" {
+		log.Logger.Error().Str("event", "get_secret_metadata").Msg("Key path cannot be empty")
+
+		return nil, fmt.Errorf("key path cannot be empty")
+	}
+
+	log.Logger.Debug().
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Str("event", "get_secret_metadata").
+		Msg("Retrieving secret metadata from main cluster")
+
+	metadata, err := mc.mainCluster.fetchSecretMetadata(ctx, mount, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata for %s/%s: %w", mount, keyPath, err)
+	}
+
+	log.Logger.Info().
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Str("event", "get_secret_metadata").
+		Int64("current_version", metadata.CurrentVersion).
+		Int("version_count", len(metadata.Versions)).
+		Msg("Successfully retrieved secret metadata from main cluster")
+
+	return metadata, nil
 }
 
 // extractMountsFromPaths extracts unique mount paths from secret paths
