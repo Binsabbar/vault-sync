@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/vault"
 	"github.com/testcontainers/testcontainers-go/wait"
-
-	"vault-sync/pkg/log"
 )
 
 type VaultClustersHelper struct {
@@ -105,7 +104,7 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 		Token:       root_token,
 	}
 
-	log.Logger.Info().Str("address", vaultConfig.Address).Msg("Vault container started")
+	fmt.Println("Vault container started at", vaultConfig.Address)
 	return &VaultHelper{
 		container: vaultContainer,
 		Config:    vaultConfig,
@@ -244,11 +243,58 @@ func (v *VaultHelper) DeleteSecret(ctx context.Context, secretPath string) (stri
 	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
+// ReadSecretData reads a secret and returns only the data fields as a map.
+// This is useful when you only need the actual secret values.
+func (v *VaultHelper) ReadSecretData(ctx context.Context, mount, path string) (map[string]string, int64, error) {
+	cmd := fmt.Sprintf("vault kv get -format=json %s/%s", mount, path)
+	output, err := v.ExecuteVaultCommand(ctx, cmd)
+	if err != nil {
+		return nil, -1, fmt.Errorf("failed to read secret data: %w", err)
+	}
+	secrets, version, err := extractSecretDataFromResponse(output)
+	if err != nil {
+		return nil, -1, fmt.Errorf("failed to parse secret data: %w", err)
+	}
+
+	return secrets, version, nil
+}
+
 // SetTokenTTL sets the token TTL and max TTL for the specified AppRole.
 // It returns the output of the command execution.
 func (v *VaultHelper) SetTokenTTL(ctx context.Context, approle string, ttl string, maxTTL string) (string, error) {
 	cmd := fmt.Sprintf("vault write auth/approle/role/%s token_ttl=%s token_max_ttl=%s", approle, ttl, maxTTL)
 	return v.ExecuteVaultCommand(ctx, cmd)
+}
+
+// QuickReset performs a faster reset by only clearing the most common test artifacts
+// Use this if you know what specific resources need to be cleaned up
+func (v *VaultHelper) QuickReset(ctx context.Context, mounts ...string) error {
+	for _, mount := range mounts {
+		cmd := fmt.Sprintf("vault secrets disable %s", mount)
+		_, err := v.ExecuteVaultCommand(ctx, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to disable KV mount %s: %w", mount, err)
+		}
+	}
+
+	_, err := v.ExecuteVaultCommand(ctx, "vault auth disable approle")
+	if err != nil {
+		return fmt.Errorf("failed to disable AppRole auth: %w", err)
+	}
+
+	testPolicies := []string{"readwrite", "readonly"}
+	for _, policy := range testPolicies {
+		for _, mount := range mounts {
+			policyName := fmt.Sprintf("%s-%s", policy, mount)
+			cmd := fmt.Sprintf("vault policy delete %s", policyName)
+			_, err := v.ExecuteVaultCommand(ctx, cmd)
+			if err != nil {
+				return fmt.Errorf("failed to delete policy %s: %w", policyName, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // ExecuteVaultCommand executes a command in the Vault container and returns the output.
@@ -261,8 +307,7 @@ func (v *VaultHelper) ExecuteVaultCommand(ctx context.Context, command string) (
 
 	byteOutput, _ := io.ReadAll(output)
 	if os.Getenv("DEBUG_TESTCONTAINERS") != "" {
-		log.Logger.Info().Str("command", command).Msg("Executing Vault command")
-		log.Logger.Info().Str("output", string(byteOutput)).Msg("Vault command output")
+		fmt.Printf("Command: %s\nOutput: %s\n", command, string(byteOutput))
 	}
 	return string(byteOutput), nil
 }
@@ -290,4 +335,42 @@ func (v *VaultHelper) getAppRoleIDAndSecret(ctx context.Context, approle string)
 		return "", "", fmt.Errorf("failed to get AppRole secret: %w", err)
 	}
 	return role_id, role_secret, nil
+}
+
+func extractSecretDataFromResponse(jsonStr string) (secretData map[string]string, version int64, err error) {
+	var response map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &response); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	data, ok := response["data"].(map[string]any)
+	if !ok {
+		return nil, 0, fmt.Errorf("missing or invalid 'data' field")
+	}
+
+	rawSecretData, ok := data["data"].(map[string]any)
+	if !ok {
+		return nil, 0, fmt.Errorf("missing or invalid 'data.data' field")
+	}
+
+	secretData = make(map[string]string, len(rawSecretData))
+	for k, v := range rawSecretData {
+		str, ok := v.(string)
+		if !ok {
+			return nil, 0, fmt.Errorf("non-string value for key %q: %T", k, v)
+		}
+		secretData[k] = str
+	}
+
+	metadata, ok := data["metadata"].(map[string]any)
+	if !ok {
+		return secretData, 0, fmt.Errorf("missing or invalid 'data.metadata' field")
+	}
+
+	versionFloat, ok := metadata["version"].(float64)
+	if !ok {
+		return secretData, 0, fmt.Errorf("missing or invalid 'data.metadata.version' field")
+	}
+
+	return secretData, int64(versionFloat), nil
 }
