@@ -101,14 +101,18 @@ func (p *PostgresHelper) Terminate(ctx context.Context) error {
 
 func (p *PostgresHelper) Stop(ctx context.Context, timeout *time.Duration) error {
 	if p.Container != nil {
-		return p.Container.Stop(ctx, timeout)
+		if p.Container.IsRunning() {
+			return p.Container.Stop(ctx, timeout)
+		}
 	}
 	return nil
 }
 
 func (p *PostgresHelper) Start(ctx context.Context) error {
 	if p.Container != nil {
-		return p.Container.Start(ctx)
+		if !p.Container.IsRunning() {
+			return p.Container.Start(ctx)
+		}
 	}
 	return nil
 }
