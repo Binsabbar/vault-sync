@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,17 +40,23 @@ func (suite *MultiClusterVaultClientTestSuite) SetupSuite() {
 }
 
 func (suite *MultiClusterVaultClientTestSuite) SetupSubTest() {
+	wg := sync.WaitGroup{}
 	for _, vaultHelper := range []*testutil.VaultHelper{
 		suite.mainVault,
 		suite.replica1Vault,
 		suite.replica2Vault,
 	} {
-		vaultHelper.Start(suite.ctx)
-		err := vaultHelper.EnableAppRoleAuth(suite.ctx)
-		suite.NoError(err, "Failed to enable AppRole auth method")
-		err = vaultHelper.EnableKVv2Mounts(suite.ctx, mounts...)
-		suite.NoError(err, "Failed to enable KV v2 mounts")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vaultHelper.Start(suite.ctx)
+			err := vaultHelper.EnableAppRoleAuth(suite.ctx)
+			suite.NoError(err, "Failed to enable AppRole auth method")
+			err = vaultHelper.EnableKVv2Mounts(suite.ctx, mounts...)
+			suite.NoError(err, "Failed to enable KV v2 mounts")
+		}()
 	}
+	wg.Wait()
 	suite.mainConfig, suite.replicaConfig = suite.setupMultiClusterVaultClientTestSuite()
 }
 
@@ -69,15 +76,22 @@ func (suite *MultiClusterVaultClientTestSuite) TearDownSuite() {
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
+	wg := sync.WaitGroup{}
+
 	for _, vaultHelper := range []*testutil.VaultHelper{
 		suite.mainVault,
 		suite.replica1Vault,
 		suite.replica2Vault,
 	} {
-		vaultHelper.Start(suite.ctx)
-		err := vaultHelper.QuickReset(suite.ctx, mounts...)
-		suite.NoError(err, "Failed to reset vault helper")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vaultHelper.Start(suite.ctx)
+			err := vaultHelper.QuickReset(suite.ctx, mounts...)
+			suite.NoError(err, "Failed to reset vault helper")
+		}()
 	}
+	wg.Wait()
 }
 
 func TestMultiClusterVaultClientSuite(t *testing.T) {
