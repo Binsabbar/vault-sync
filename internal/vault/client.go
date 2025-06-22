@@ -4,6 +4,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -199,6 +200,15 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 		}
 	}
 
+	slices.SortStableFunc(results, func(a, b *models.SyncedSecret) int {
+		if a.DestinationCluster < b.DestinationCluster {
+			return -1
+		} else if a.DestinationCluster > b.DestinationCluster {
+			return 1
+		}
+		return 0
+	})
+
 	successCount := 0
 	failureCount := 0
 	for _, result := range results {
@@ -304,7 +314,7 @@ func (mc *MultiClusterVaultClient) syncToSingleReplica(
 		Msg("Starting synchronization to replica cluster")
 
 	clusterManager := mc.replicaClusters[clusterName]
-	destinationVersion, err := clusterManager.writeSecret(ctx, mount, keyPath, sourceSecret.Data.Data)
+	destinationVersion, err := clusterManager.writeSecret(ctx, mount, keyPath, sourceSecret.Data)
 	if err != nil {
 		decorateLog(log.Logger.Error, "sync_to_replica_start", clusterName, mount, keyPath).
 			Err(err).
