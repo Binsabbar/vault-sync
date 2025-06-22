@@ -28,16 +28,11 @@ type PostgreSQLSyncedSecretRepository struct {
 	psql           *postgres.PostgresDatastore
 	circuitBreaker *gobreaker.CircuitBreaker
 	retryOptFunc   func() []backoff.RetryOption
+	logger         zerolog.Logger
 }
 
 type SyncedSecretResult interface {
 	*models.SyncedSecret | []models.SyncedSecret
-}
-
-type syncedSecretRequestContext struct {
-	backend            string
-	path               string
-	destinationCluster string
 }
 
 // NewPostgreSQLSyncedSecretRepository creates a new PostgreSQLSyncedSecretRepository instance
@@ -57,6 +52,7 @@ func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *Post
 		},
 		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
 			log.Logger.Info().
+				Str("component", "postgres_synced_secret_repository").
 				Str("event", "circuit_breaker_state_change").
 				Str("circuit_breaker", name).
 				Str("from_state", from.String()).
@@ -69,15 +65,20 @@ func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *Post
 		psql:           psql,
 		circuitBreaker: gobreaker.NewCircuitBreaker(gobreakerSettings),
 		retryOptFunc:   newBackoffStrategy,
+		logger: log.Logger.With().
+			Str("component", "postgres_synced_secret_repository").
+			Logger(),
 	}
 }
 
 func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
-	requestCtx := syncedSecretRequestContext{
-		backend:            backend,
-		path:               path,
-		destinationCluster: destinationCluster,
-	}
+	logger := repo.logger.With().
+		Str("event", "get_synced_secret").
+		Str("backend", backend).
+		Str("path", path).
+		Str("destinationCluster", destinationCluster).
+		Logger()
+
 	dbOperation := func() (any, error) {
 		var secret models.SyncedSecret
 		query := `SELECT * FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
@@ -85,18 +86,14 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		err := repo.psql.DB.Get(&secret, query, backend, path, destinationCluster)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				repo.decorateLog(log.Logger.Debug, "get_synced_secret", requestCtx).
-					Msg("Synced secret not found")
+				logger.Debug().Msg("Synced secret not found")
 				return nil, nil
 			}
-			repo.decorateLog(log.Logger.Error, "get_synced_secret", requestCtx).
-				Err(err).
-				Msg("error occurred while getting synced secret")
+			logger.Error().Err(err).Msg("error occurred while getting synced secret")
 			return nil, fmt.Errorf("error occurred while getting synced secret: %w", err)
 		}
 
-		repo.decorateLog(log.Logger.Debug, "get_synced_secret", requestCtx).
-			Msg("Successfully retrieved synced secret")
+		logger.Debug().Msg("Successfully retrieved synced secret")
 		return &secret, nil
 	}
 
@@ -114,8 +111,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.Synce
 		query := `SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`
 		err := repo.psql.DB.Select(&secrets, query)
 		if err != nil {
-			log.Logger.Error().
-				Err(err).
+			repo.logger.Error().Err(err).
 				Str("event", "get_synced_secrets").
 				Msg("error occurred while getting synced secrets")
 			return secrets, fmt.Errorf("error occurred while getting synced secrets: %w", err)
@@ -128,19 +124,19 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.Synce
 		return []models.SyncedSecret{}, err
 	}
 
-	log.Logger.Debug().
-		Int("count", len(secrets)).
+	repo.logger.Debug().Int("count", len(secrets)).
 		Str("event", "get_synced_secrets").
 		Msg("Successfully retrieved synced secrets")
 	return secrets, nil
 }
 
 func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret models.SyncedSecret) error {
-	requestCtx := syncedSecretRequestContext{
-		backend:            secret.SecretBackend,
-		path:               secret.SecretPath,
-		destinationCluster: secret.DestinationCluster,
-	}
+	logger := repo.logger.With().
+		Str("event", "update_synced_secret_status").
+		Str("backend", secret.SecretBackend).
+		Str("path", secret.SecretPath).
+		Str("destinationCluster", secret.DestinationCluster).
+		Logger()
 
 	dbOperation := func() (any, error) {
 		query := `
@@ -167,23 +163,17 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret mo
 
 		result, err := repo.psql.DB.NamedExec(query, secret)
 		if err != nil {
-			repo.decorateLog(log.Logger.Error, "update_synced_secret_status", requestCtx).
-				Err(err).
-				Msg("error occurred while updating synced secret status")
+			logger.Error().Err(err).Msg("error occurred while updating synced secret status")
 			return nil, fmt.Errorf("error occurred while updating synced secret status: %w", err)
 		}
 
 		rowsAffected, err := result.RowsAffected()
 		if err != nil {
-			repo.decorateLog(log.Logger.Error, "update_synced_secret_status", requestCtx).
-				Err(err).
-				Msg("error occurred while checking rows affected")
+			logger.Error().Err(err).Msg("error occurred while checking rows affected")
 			return nil, fmt.Errorf("error occurred while checking rows affected: %w", err)
 		}
 
-		repo.decorateLog(log.Logger.Debug, "update_synced_secret_status", requestCtx).
-			Int64("rows_affected", rowsAffected).
-			Msg("Successfully updated synced secret status")
+		logger.Debug().Int64("rows_affected", rowsAffected).Msg("Successfully updated synced secret status")
 		return &secret, nil
 	}
 
@@ -239,14 +229,8 @@ func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err erro
 	}
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) decorateLog(eventFactory func() *zerolog.Event, event string, reqContext syncedSecretRequestContext) *zerolog.Event {
-	return eventFactory().
-		Str("event", event).
-		Str("backend", reqContext.backend).
-		Str("path", reqContext.path).
-		Str("destinationCluster", reqContext.destinationCluster)
-}
-
+// newBackoffStrategy creates a new backoff strategy for retrying database operations.
+// It uses an exponential backoff strategy with a maximum of 10 retries and a total elapsed time of 60 seconds.
 func newBackoffStrategy() []backoff.RetryOption {
 	strategyOpts := &backoff.ExponentialBackOff{
 		InitialInterval:     250 * time.Millisecond,
