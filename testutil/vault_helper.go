@@ -121,14 +121,18 @@ func (v *VaultHelper) Terminate(ctx context.Context) error {
 
 func (v *VaultHelper) Stop(ctx context.Context, timeout *time.Duration) error {
 	if v.container != nil {
-		return v.container.Stop(ctx, timeout)
+		if v.container.IsRunning() {
+			return v.container.Stop(ctx, timeout)
+		}
 	}
 	return nil
 }
 
 func (v *VaultHelper) Start(ctx context.Context) error {
 	if v.container != nil {
-		return v.container.Start(ctx)
+		if !v.container.IsRunning() {
+			return v.container.Start(ctx)
+		}
 	}
 	return nil
 }
