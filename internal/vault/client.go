@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"sync"
 	"vault-sync/internal/config"
 	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
@@ -20,7 +19,6 @@ import (
 type MultiClusterVaultClient struct {
 	mainCluster     *clusterManager
 	replicaClusters map[string]*clusterManager
-	mu              sync.RWMutex
 }
 
 func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainCluster, replicasConfig []*config.ReplicaCluster) (*MultiClusterVaultClient, error) {
@@ -36,7 +34,6 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainClus
 	multiClusterClient := &MultiClusterVaultClient{
 		mainCluster:     mainClient,
 		replicaClusters: make(map[string]*clusterManager),
-		mu:              sync.RWMutex{},
 	}
 
 	for _, replicaCfg := range replicasConfig {
@@ -72,8 +69,6 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 		return nil, fmt.Errorf("missing mounts in main cluster: %v", missing)
 	}
 
-	mc.mu.RLock()
-	defer mc.mu.RUnlock()
 	for name, cm := range mc.replicaClusters {
 		if missing, err := cm.checkMounts(ctx, name, mounts); err != nil {
 			return nil, err
@@ -158,6 +153,7 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 
 	syncAttemptTime := time.Now()
 	decorateLog(log.Logger.Debug, "sync_secret_to_replicas", "", mount, keyPath).
+		Time("sync_attempt_time", syncAttemptTime).
 		Msg("Starting secret synchronization from main cluster to replicas")
 
 	sourceSecret, err := mc.readSecretFromMainCluster(ctx, mount, keyPath)
@@ -165,9 +161,7 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 		return nil, fmt.Errorf("failed to read secret from main cluster %s/%s: %w", mount, keyPath, err)
 	}
 
-	mc.mu.RLock()
 	replicaCount := len(mc.replicaClusters)
-	mc.mu.RUnlock()
 	if replicaCount == 0 {
 		decorateLog(log.Logger.Warn, "sync_secret_to_replicas", "replica_clusters", mount, keyPath).
 			Msg("No replica clusters configured, skipping synchronization")
@@ -177,7 +171,6 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 	results := make([]*models.SyncedSecret, 0, replicaCount)
 	resultsChan := make(chan *models.SyncedSecret, replicaCount)
 
-	mc.mu.RLock()
 	for clusterName := range mc.replicaClusters {
 		go mc.syncToSingleReplica(
 			ctx,
@@ -189,7 +182,6 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 			resultsChan,
 		)
 	}
-	mc.mu.RUnlock()
 
 	for i := 0; i < replicaCount; i++ {
 		select {
