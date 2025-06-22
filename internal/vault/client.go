@@ -19,6 +19,7 @@ import (
 type MultiClusterVaultClient struct {
 	mainCluster     *clusterManager
 	replicaClusters map[string]*clusterManager
+	logger          zerolog.Logger
 }
 
 func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainCluster, replicasConfig []*config.ReplicaCluster) (*MultiClusterVaultClient, error) {
@@ -34,6 +35,7 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainClus
 	multiClusterClient := &MultiClusterVaultClient{
 		mainCluster:     mainClient,
 		replicaClusters: make(map[string]*clusterManager),
+		logger:          log.Logger.With().Str("component", "multi_cluster_vault_client").Logger(),
 	}
 
 	for _, replicaCfg := range replicasConfig {
@@ -54,18 +56,21 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainClus
 // GetSecretMounts retrieves the secret mounts for the given secret paths
 // It checks if the mounts exist in all clusters (main and replicas).
 func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPaths []string) ([]string, error) {
+	logger := mc.logger.With().
+		Str("event", "get_secret_mounts").
+		Strs("secret_paths", secretPaths).
+		Logger()
+
 	mounts := extractMountsFromPaths(secretPaths)
 	if len(mounts) == 0 {
-		log.Logger.Error().
-			Strs("secret_paths", secretPaths).
-			Str("event", "get_secret_mounts").
-			Msg("No valid mounts found in provided secret paths")
+		logger.Error().Msg("No valid mounts found in provided secret paths")
 		return nil, fmt.Errorf("no valid mounts found in provided secret paths")
 	}
 
 	if missing, err := mc.mainCluster.checkMounts(ctx, "main", mounts); err != nil {
 		return nil, err
 	} else if len(missing) > 0 {
+		logger.Error().Strs("missing_mounts", missing).Msg("Missing mounts in main cluster")
 		return nil, fmt.Errorf("missing mounts in main cluster: %v", missing)
 	}
 
@@ -73,13 +78,15 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 		if missing, err := cm.checkMounts(ctx, name, mounts); err != nil {
 			return nil, err
 		} else if len(missing) > 0 {
+			logger.Error().Str("replica_cluster", name).
+				Strs("missing_mounts", missing).
+				Msg("Missing mounts in replica cluster")
 			return nil, fmt.Errorf("missing mounts in replica cluster %s: %v", name, missing)
 		}
 	}
 
-	log.Logger.Info().
+	logger.Info().
 		Strs("validated_mounts", mounts).
-		Str("event", "get_secret_mounts").
 		Msg("All secret mounts exist in all clusters")
 	return mounts, nil
 }
@@ -88,26 +95,25 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPa
 // This operation is only performed on the main cluster as it's used for discovery and version management.
 // Returns metadata including version information, creation time, and deletion status.
 func (mc *MultiClusterVaultClient) GetSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error) {
+	logger := mc.logger.With().
+		Str("event", "get_secret_metadata").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Logger()
+
+	logger.Debug().Msg("Retrieving secret metadata from main cluster")
 	if err := validateMountAndKeyPath(mount, keyPath); err != nil {
-		log.Logger.Error().Str("event", "get_secret_metadata").Msg("Invalid mount or key path")
+		logger.Error().Msg("Invalid mount or key path")
 		return nil, err
 	}
 
-	log.Logger.Debug().
-		Str("mount", mount).
-		Str("key_path", keyPath).
-		Str("event", "get_secret_metadata").
-		Msg("Retrieving secret metadata from main cluster")
-
+	logger.Debug().Msg("Retrieving secret metadata from main cluster")
 	metadata, err := mc.mainCluster.fetchSecretMetadata(ctx, mount, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metadata for %s/%s: %w", mount, keyPath, err)
 	}
 
-	log.Logger.Info().
-		Str("mount", mount).
-		Str("key_path", keyPath).
-		Str("event", "get_secret_metadata").
+	logger.Info().
 		Int64("current_version", metadata.CurrentVersion).
 		Int("version_count", len(metadata.Versions)).
 		Msg("Successfully retrieved secret metadata from main cluster")
@@ -122,22 +128,19 @@ func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount 
 		return nil, fmt.Errorf("mount cannot be empty")
 	}
 
-	log.Logger.Debug().
-		Str("mount", mount).
+	logger := mc.logger.With().
 		Str("event", "get_keys_under_mount").
-		Msg("Retrieving all keys under mount from main cluster")
+		Str("mount", mount).
+		Logger()
 
+	logger.Debug().Msg("Retrieving all keys under mount from main cluster")
 	keys, err := mc.mainCluster.fetchKeysUnderMount(ctx, mount)
 	if err != nil {
+		logger.Error().Err(err).Msg("Failed to retrieve keys under mount")
 		return nil, fmt.Errorf("failed to get keys under mount %s: %w", mount, err)
 	}
 
-	log.Logger.Info().
-		Str("mount", mount).
-		Str("event", "get_keys_under_mount").
-		Int("key_count", len(keys)).
-		Msg("Successfully retrieved keys from main cluster")
-
+	logger.Info().Int("key_count", len(keys)).Msg("Successfully retrieved keys from main cluster")
 	return keys, nil
 }
 
@@ -145,26 +148,29 @@ func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount 
 // It returns a list of SyncedSecret objects representing the sync status for each replica.
 // The method handles version conflicts, missing secrets, and per-replica failures gracefully.
 func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncedSecret, error) {
+	logger := mc.logger.With().
+		Str("event", "sync_secret_to_replicas").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Logger()
+
 	if err := validateMountAndKeyPath(mount, keyPath); err != nil {
-		decorateLog(log.Logger.Error, "sync_secret_to_replicas", "", "", "").
-			Msg("Invalid mount or key path")
+		logger.Error().Err(err).Msg("Invalid mount or key path")
 		return nil, err
 	}
 
 	syncAttemptTime := time.Now()
-	decorateLog(log.Logger.Debug, "sync_secret_to_replicas", "", mount, keyPath).
-		Time("sync_attempt_time", syncAttemptTime).
-		Msg("Starting secret synchronization from main cluster to replicas")
+	logger.Debug().Time("sync_attempt_time", syncAttemptTime).Msg("Starting secret synchronization from main cluster to replicas")
 
 	sourceSecret, err := mc.readSecretFromMainCluster(ctx, mount, keyPath)
 	if err != nil {
+		logger.Error().Err(err).Msg("Failed to read secret from main cluster")
 		return nil, fmt.Errorf("failed to read secret from main cluster %s/%s: %w", mount, keyPath, err)
 	}
 
 	replicaCount := len(mc.replicaClusters)
 	if replicaCount == 0 {
-		decorateLog(log.Logger.Warn, "sync_secret_to_replicas", "replica_clusters", mount, keyPath).
-			Msg("No replica clusters configured, skipping synchronization")
+		logger.Warn().Msg("No replica clusters configured, skipping synchronization")
 		return []*models.SyncedSecret{}, nil
 	}
 
@@ -211,10 +217,9 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 		}
 	}
 
-	decorateLog(log.Logger.Info, "sync_secret_to_replicas", "", mount, keyPath).
+	logger.Info().
 		Int("success_count", successCount).
 		Int("failure_count", failureCount).
-		Int("total_replicas", replicaCount).
 		Msg("Secret synchronization completed")
 
 	return results, nil
@@ -264,13 +269,17 @@ func validateMountAndKeyPath(mount, keyPath string) error {
 
 // readSecretFromMainCluster reads both secret data and metadata from the main cluster
 func (mc *MultiClusterVaultClient) readSecretFromMainCluster(ctx context.Context, mount, keyPath string) (*VaultSecretResponse, error) {
-	decorateLog(log.Logger.Debug, "read_secret_main_cluster", "", mount, keyPath).
-		Msg("Reading secret from main cluster")
+	logger := mc.logger.With().
+		Str("event", "read_secret_main_cluster").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Str("cluster", "main").
+		Logger()
 
+	logger.Debug().Msg("Reading secret")
 	secretResponse, err := mc.mainCluster.readSecret(ctx, mount, keyPath)
 	if err != nil {
-		decorateLog(log.Logger.Error, "read_secret_main_cluster", "", mount, keyPath).
-			Msg("Failed to read secret data")
+		logger.Error().Err(err).Msg("Failed to read secret data")
 		return nil, fmt.Errorf("failed to read secret data: %w", err)
 	}
 
@@ -302,15 +311,18 @@ func (mc *MultiClusterVaultClient) syncToSingleReplica(
 		}
 	}()
 
-	decorateLog(log.Logger.Debug, "sync_to_replica_start", clusterName, mount, keyPath).
-		Msg("Starting synchronization to replica cluster")
+	logger := mc.logger.With().
+		Str("event", "sync_to_single_replica").
+		Str("cluster", clusterName).
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Logger()
 
+	logger.Debug().Msg("Starting synchronization to replica cluster")
 	clusterManager := mc.replicaClusters[clusterName]
 	destinationVersion, err := clusterManager.writeSecret(ctx, mount, keyPath, sourceSecret.Data)
 	if err != nil {
-		decorateLog(log.Logger.Error, "sync_to_replica_start", clusterName, mount, keyPath).
-			Err(err).
-			Msg("Failed to write secret to replica cluster")
+		logger.Error().Err(err).Msg("Failed to write secret to replica cluster")
 		syncResult.Status = models.StatusFailed
 		errorMsg := fmt.Sprintf("failed to write secret to cluster %s: %v", clusterName, err)
 		syncResult.ErrorMessage = &errorMsg
@@ -318,10 +330,7 @@ func (mc *MultiClusterVaultClient) syncToSingleReplica(
 	}
 
 	if destinationVersion < 0 {
-		decorateLog(log.Logger.Error, "sync_to_replica_start", clusterName, mount, keyPath).
-			Int64("destination_version", destinationVersion).
-			Msg("Invalid destination version after write")
-
+		logger.Error().Int64("destination_version", destinationVersion).Msg("Invalid destination version after write")
 		syncResult.Status = models.StatusFailed
 		errorMsg := fmt.Sprintf("invalid destination version %d after write to cluster %s", destinationVersion, clusterName)
 		syncResult.ErrorMessage = &errorMsg
@@ -333,16 +342,8 @@ func (mc *MultiClusterVaultClient) syncToSingleReplica(
 	now := time.Now()
 	syncResult.LastSyncSuccess = &now
 
-	decorateLog(log.Logger.Debug, "sync_to_replica_start", clusterName, mount, keyPath).
+	logger.Debug().
 		Int64("source_version", sourceSecret.Metadata.Version).
 		Int64("destination_version", destinationVersion).
 		Msg("Successfully synchronized secret to replica cluster")
-}
-
-func decorateLog(eventFactory func() *zerolog.Event, event, cluster, mount, keypath string) *zerolog.Event {
-	return eventFactory().
-		Str("event", event).
-		Str("cluster", cluster).
-		Str("mount", mount).
-		Str("key_path", keypath)
 }
