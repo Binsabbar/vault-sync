@@ -13,7 +13,7 @@ import (
 type ClusterManagerTestSuite struct {
 	suite.Suite
 	vaultHelper *testutil.VaultHelper
-	cfg         *config.VaultConfig
+	cfg         *config.VaultClusterConfig
 	approleName string
 	approleId   string
 	ctx         context.Context
@@ -34,7 +34,7 @@ func (suite *ClusterManagerTestSuite) SetupTest() {
 	roleID, roleSecret, err := suite.vaultHelper.CreateApproleWithRWPermissions(suite.ctx, "my-role", "my-mount")
 	suite.Require().NoError(err, "Failed to create cluster manager")
 
-	suite.cfg = &config.VaultConfig{
+	suite.cfg = &config.VaultClusterConfig{
 		Address:       suite.vaultHelper.Config.Address,
 		AppRoleID:     roleID,
 		AppRoleSecret: roleSecret,

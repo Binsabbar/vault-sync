@@ -17,11 +17,11 @@ import (
 
 type clusterManager struct {
 	client *vault.Client
-	config *config.VaultConfig
+	config *config.VaultClusterConfig
 	logger zerolog.Logger
 }
 
-func newClusterManager(cfg *config.VaultConfig) (*clusterManager, error) {
+func newClusterManager(cfg *config.VaultClusterConfig) (*clusterManager, error) {
 	tlsConfig := vault.TLSConfiguration{
 		InsecureSkipVerify: cfg.TLSSkipVerify,
 	}
@@ -48,6 +48,7 @@ func newClusterManager(cfg *config.VaultConfig) (*clusterManager, error) {
 		config: cfg,
 		logger: log.Logger.With().
 			Str("component", "cluster_manager").
+			Str("cluster", cfg.Name).
 			Str("app_role", cfg.AppRoleID).
 			Str("app_role_mount", cfg.AppRoleMount).
 			Str("vault_address", cfg.Address).
@@ -123,7 +124,6 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, mounts []string) ([]string, error) {
 	logger := cm.logger.With().
 		Str("event", "check_mounts").
-		Str("cluster", clusterName).
 		Strs("mounts", mounts).
 		Logger()
 
