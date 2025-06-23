@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+	"github.com/rs/zerolog"
 
 	"github.com/golang-migrate/migrate/v4"
 	psqlmigrator "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -26,6 +27,7 @@ type PostgresDatastore struct {
 	healthCheckInterval *time.Ticker
 	stopHealthCheckCh   chan struct{}
 	healthCheckDone     sync.WaitGroup
+	logger              zerolog.Logger
 }
 
 type PostgresConfig struct {
@@ -63,6 +65,9 @@ func NewPostgresDatastore(cfg *config.Postgres, migrationSource migrations.Migra
 		migrationSource:     migrationSource,
 		healthCheckInterval: time.NewTicker(defaultHealthCheckPeriod),
 		stopHealthCheckCh:   make(chan struct{}),
+		logger: log.Logger.With().
+			Str("component", "postgres_datastore").
+			Logger(),
 	}
 
 	psqlDB.startHealthCheck()
@@ -74,13 +79,13 @@ func (p *PostgresDatastore) Close() error {
 	if p.healthCheckInterval != nil && p.stopHealthCheckCh != nil {
 		select {
 		case p.stopHealthCheckCh <- struct{}{}:
-			log.Logger.Info().Msg("Waiting for PostgreSQL health check to finish...")
+			p.logger.Info().Msg("Waiting for PostgreSQL health check to finish...")
 			p.healthCheckDone.Wait()
 		default:
 		}
 	}
 	if p.DB != nil {
-		log.Logger.Info().Msg("Closing PostgreSQL connection")
+		p.logger.Info().Msg("Closing PostgreSQL connection")
 		return p.DB.Close()
 	}
 	return nil
@@ -98,7 +103,7 @@ func redactDSN(dsnStr string) string {
 }
 
 func (p *PostgresDatastore) initSchema() error {
-	log.Logger.Info().Msg("Initializing database schema via embedded migrations...")
+	p.logger.Info().Msg("Initializing database schema via embedded migrations...")
 	migrationSource := p.migrationSource
 	d, err := migrationSource.GetSourceDriver()
 	if err != nil {
@@ -107,30 +112,30 @@ func (p *PostgresDatastore) initSchema() error {
 
 	driver, err := psqlmigrator.WithInstance(p.DB.DB, &psqlmigrator.Config{})
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("Could not create postgres driver for migrate")
+		p.logger.Error().Err(err).Msg("Could not create postgres driver for migrate")
 		return fmt.Errorf("could not create postgres driver for migrate: %w", err)
 	}
 
 	m, err := migrate.NewWithInstance(migrationSource.GetSourceType(), d, p.DB.DriverName(), driver)
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("Could not create migrate instance")
+		p.logger.Error().Err(err).Msg("Could not create migrate instance")
 		return fmt.Errorf("could not create migrate instance: %w", err)
 	}
 
-	log.Logger.Info().Msg("Applying migrations...")
+	p.logger.Info().Msg("Applying migrations...")
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Logger.Error().Err(err).Msg("Failed to apply migrations")
+		p.logger.Error().Err(err).Msg("Failed to apply migrations")
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 
 	version, dirty, err := m.Version()
 	if err != nil {
-		log.Logger.Warn().Err(err).Msg("Could not get migration version after applying")
+		p.logger.Warn().Err(err).Msg("Could not get migration version after applying")
 	} else {
-		log.Logger.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations applied.")
+		p.logger.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations applied.")
 	}
 
-	log.Logger.Info().Msg("Database schema initialized/updated successfully via migrations.")
+	p.logger.Info().Msg("Database schema initialized/updated successfully via migrations.")
 	return nil
 }
 
@@ -183,14 +188,14 @@ func (p *PostgresDatastore) startHealthCheck() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := p.DB.PingContext(ctx)
 				if err != nil {
-					log.Logger.Warn().Err(err).Msg("Database health check failed")
+					p.logger.Warn().Err(err).Msg("Database health check failed")
 				}
 				cancel()
 			case <-p.stopHealthCheckCh:
-				log.Logger.Info().Msg("Stopping database health check")
+				p.logger.Info().Msg("Stopping database health check")
 				p.healthCheckInterval.Stop()
 				close(p.stopHealthCheckCh)
-				log.Logger.Info().Msg("Stopped PostgreSQL health check")
+				p.logger.Info().Msg("Stopped PostgreSQL health check")
 				p.healthCheckInterval = nil
 				p.stopHealthCheckCh = nil
 				p.healthCheckDone.Done()
@@ -199,5 +204,5 @@ func (p *PostgresDatastore) startHealthCheck() {
 		}
 	}()
 
-	log.Logger.Info().Msg("Started database health check")
+	p.logger.Info().Msg("Started database health check")
 }
