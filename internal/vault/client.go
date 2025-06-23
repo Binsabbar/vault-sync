@@ -22,8 +22,8 @@ type MultiClusterVaultClient struct {
 	logger          zerolog.Logger
 }
 
-func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainCluster, replicasConfig []*config.ReplicaCluster) (*MultiClusterVaultClient, error) {
-	mainClient, err := newClusterManager(mainConfig.MapToVaultConfig())
+func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.VaultClusterConfig, replicasConfig []*config.VaultClusterConfig) (*MultiClusterVaultClient, error) {
+	mainClient, err := newClusterManager(mainConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create main cluster client: %w", err)
 	}
@@ -39,7 +39,7 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.MainClus
 	}
 
 	for _, replicaCfg := range replicasConfig {
-		replicaClient, err := newClusterManager(replicaCfg.MapToVaultConfig())
+		replicaClient, err := newClusterManager(replicaCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create replica cluster client %s: %w", replicaCfg.Name, err)
 		}

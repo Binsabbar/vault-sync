@@ -1,8 +1,25 @@
 # id is the unique identifier for sync service
 id: test
-# sync interval is the interval at which the cluster will sync secrets from the main cluster
-interval: 5
+
 log_level: info
+
+sync_rule:
+  # interval is the period for syncing secrets, postfix the time unit (s, m, h)
+  #  minimum is 60s
+  #  maximum is 86400s (1day)
+  interval: 60s
+  # kv_mounts is a list of KV mounts to replicate
+  kv_mounts:
+    - secret
+    - secret2
+  # paths_to_replicate is a list of paths to replicate from the main cluster to the replica clusters
+  paths_to_replicate:
+    - secret/data/test
+    - secret/data/test2
+  # paths_to_ignore is a list of paths to ignore in the main cluster
+  paths_to_ignore:
+    - secret/data/test3
+    - secret/data/test4
 
 postgres:
   # address is the address of the PostgreSQL database
@@ -23,6 +40,7 @@ postgres:
 vault:
   # main_cluster is the main cluster from which secrets will be replicated
   main_cluster:
+    name: main-cluster
     # address is the address of the main cluster
     address: http://vault:8200
     # tls_skip_verify is a boolean that indicates whether to skip TLS verification
@@ -35,14 +53,6 @@ vault:
     app_role_secret: my_app_secret
     # app_role_mount is the mount point for the AppRole authentication method
     app_role_mount: approle
-    # paths_to_replicate is a list of paths to replicate from the main cluster
-    paths_to_replicate:
-      - secret/data/test
-      - secret/data/test2
-    # paths_to_ignore is a list of paths to ignore in the main cluster
-    paths_to_ignore:
-      - secret/data/test3
-      - secret/data/test4
   replica_clusters:
     - name: replica-2
       address: http://vault-replica-2:8200
