@@ -4,6 +4,7 @@ import (
 	"maps"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -19,15 +20,21 @@ type invalidConfigTestTable struct {
 type configFields map[string]interface{}
 
 var validAppConfig = configFields{
-	"id":                                 "test",
-	"interval":                           5,
-	"log_level":                          "info",
+	"id":        "test",
+	"log_level": "info",
+
+	"sync_rule.interval":           "60s",
+	"sync_rule.kv_mounts":          []string{"kv"},
+	"sync_rule.paths_to_replicate": []string{"secret/data/test", "secret/data/test2"},
+	"sync_rule.paths_to_ignore":    []string{"secret/data/test3", "secret/data/test4"},
+
 	"postgres.address":                   "localhost",
 	"postgres.port":                      5432,
 	"postgres.username":                  "u",
 	"postgres.password":                  "p",
 	"postgres.db_name":                   "d",
 	"postgres.max_connection":            "10",
+	"vault.main_cluster.name":            "main-cluster",
 	"vault.main_cluster.address":         "http://vault:8200",
 	"vault.main_cluster.app_role_id":     "r",
 	"vault.main_cluster.app_role_secret": "s",
@@ -37,26 +44,12 @@ var validAppConfig = configFields{
 }
 
 var validVaultReplicaClusterConfig = configFields{
-	"name":            "r2",
-	"address":         "http://vault-replica-2:8200",
+	"name":            "replica-1",
+	"address":         "http://vault-replica-1:8200",
 	"app_role_id":     "r",
 	"app_role_secret": "s",
 	"app_role_mount":  "s",
 	"tls_skip_verify": "true",
-}
-
-func deleteFromMap(m configFields, keys ...string) configFields {
-	clonedMap := maps.Clone(m)
-	for _, argument := range keys {
-		delete(clonedMap, argument)
-	}
-	return clonedMap
-}
-
-func updateAndReturnMap(m configFields, key string, value interface{}) configFields {
-	clonedMap := maps.Clone(m)
-	clonedMap[key] = value
-	return clonedMap
 }
 
 func TestConfigLoadFromYAML(t *testing.T) {
@@ -70,8 +63,12 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "test", cfg.ID)
-	require.Equal(t, 5, cfg.Interval)
 	require.Equal(t, "info", cfg.LogLevel)
+
+	require.Equal(t, time.Duration(60*time.Second), cfg.SyncRule.GetInterval())
+	require.Equal(t, []string{"secret", "secret2"}, cfg.SyncRule.KvMounts)
+	require.ElementsMatch(t, []string{"secret/data/test", "secret/data/test2"}, cfg.SyncRule.PathsToReplicate)
+	require.ElementsMatch(t, []string{"secret/data/test3", "secret/data/test4"}, cfg.SyncRule.PathsToIgnore)
 
 	// Check Postgres configuration
 	require.Equal(t, "localhost", cfg.Postgres.Address)
@@ -84,14 +81,13 @@ func TestConfigLoadFromYAML(t *testing.T) {
 	require.Equal(t, 10, cfg.Postgres.MaxConnections)
 
 	// Check Vault configuration main cluster
+	require.Equal(t, "main-cluster", cfg.Vault.MainCluster.Name)
 	require.Equal(t, "http://vault:8200", cfg.Vault.MainCluster.Address)
 	require.True(t, cfg.Vault.MainCluster.TLSSkipVerify)
 	require.Equal(t, "/path/to/cert.pem", cfg.Vault.MainCluster.TLSCertFile)
 	require.Equal(t, "my_app_role", cfg.Vault.MainCluster.AppRoleID)
 	require.Equal(t, "my_app_secret", cfg.Vault.MainCluster.AppRoleSecret)
 	require.Equal(t, "approle", cfg.Vault.MainCluster.AppRoleMount)
-	require.ElementsMatch(t, []string{"secret/data/test", "secret/data/test2"}, cfg.Vault.MainCluster.PathsToReplicate)
-	require.ElementsMatch(t, []string{"secret/data/test3", "secret/data/test4"}, cfg.Vault.MainCluster.PathsToIgnore)
 
 	// Check Vault configuration replica clusters
 	require.Len(t, cfg.Vault.ReplicaClusters, 2)
@@ -145,19 +141,69 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.ID is required",
 			},
 			{
-				name:        "missing interval",
-				setFields:   deleteFromMap(validAppConfig, "interval"),
-				errContains: "Config.Interval is required",
-			},
-			{
-				name:        "interval not int",
-				setFields:   updateAndReturnMap(validAppConfig, "interval", "a"),
-				errContains: "cannot parse 'interval' as int",
-			},
-			{
 				name:        "invalid log_level value",
 				setFields:   updateAndReturnMap(validAppConfig, "log_level", "invalid"),
 				errContains: "Config.LogLevel must be one of [trace debug info warn error fatal panic]",
+			},
+
+			// sync rule level
+			{
+				name:        "missing interval",
+				setFields:   deleteFromMap(validAppConfig, "sync_rule.interval"),
+				errContains: "Config.SyncRule.Interval is required",
+			},
+			{
+				name:        "interval not string",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.interval", 123),
+				errContains: "Config.SyncRule.Interval must match the format of a valid duration (e.g., 1s, 5m, 2h)",
+			},
+			{
+				name:        "interval not valid duration",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.interval", "invalid"),
+				errContains: "Config.SyncRule.Interval must match the format of a valid duration (e.g., 1s, 5m, 2h)",
+			},
+			{
+				name:        "interval is less than 60s",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.interval", "59s"),
+				errContains: "Config.SyncRule.Interval must be greater than or equal to 60s",
+			},
+			{
+				name:        "interval is greater than 24h",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.interval", "25h"),
+				errContains: "Config.SyncRule.Interval must be less than or equal to 24h",
+			},
+			{
+				name:        "kv_mounts is not present",
+				setFields:   deleteFromMap(validAppConfig, "sync_rule.kv_mounts"),
+				errContains: "Config.SyncRule.KvMounts is required",
+			},
+			{
+				name:        "kv_mounts is empty",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.kv_mounts", []string{}),
+				errContains: "Config.SyncRule.KvMounts must have at least 1 items",
+			},
+			{
+				name:        "kv_mounts contains duplicated items",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.kv_mounts", []string{"secret", "secret", "secret2"}),
+				errContains: "Config.SyncRule.KvMounts must contain unique items",
+			},
+			{
+				name:        "duplicated paths in sync_rule.paths_to_replicate",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.paths_to_replicate", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
+				errContains: "Config.SyncRule.PathsToReplicate must contain unique items",
+			},
+			{
+				name:        "duplicated paths in sync_rule.paths_to_ignore",
+				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.paths_to_ignore", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
+				errContains: "Config.SyncRule.PathsToIgnore must contain unique items",
+			},
+			{
+				name: "mautual execlusive paths in sync_rule.paths_to_replicate and sync_rule.paths_to_ignore",
+				setFields: updateAndReturnMap(
+					updateAndReturnMap(validAppConfig, "sync_rule.paths_to_replicate", []string{"secret/data/test1", "secret/data/test3"}),
+					"sync_rule.paths_to_ignore", []string{"secret/data/test4", "secret/data/test3"},
+				),
+				errContains: "Config.SyncRule.PathsToIgnore must not contain items that are also in PathsToReplicate, Config.SyncRule.PathsToReplicate must not contain items that are also in PathsToReplicate",
 			},
 
 			// postgres level
@@ -219,6 +265,11 @@ func TestConfigurationValidation(t *testing.T) {
 
 			// vault level
 			{
+				name:        "missing vault.main_cluster.name",
+				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.name"),
+				errContains: "Config.Vault.MainCluster.Name is required",
+			},
+			{
 				name:        "missing vault.main_cluster.address",
 				setFields:   deleteFromMap(validAppConfig, "vault.main_cluster.address"),
 				errContains: "Config.Vault.MainCluster.Address is required",
@@ -247,24 +298,6 @@ func TestConfigurationValidation(t *testing.T) {
 				name:        "invalid vault.main_cluster.tls_cert_file",
 				setFields:   updateAndReturnMap(updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_cert_file", "invalid+/"), "vault.main_cluster.tls_skip_verify", "false"),
 				errContains: "Config.Vault.MainCluster.TLSCertFile must be a valid file path",
-			},
-			{
-				name:        "duplicated paths in vault.main_cluster.paths_to_replicate",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.main_cluster.paths_to_replicate", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
-				errContains: "Config.Vault.MainCluster.PathsToReplicate must contain unique items",
-			},
-			{
-				name:        "duplicated paths in vault.main_cluster.paths_to_ignore",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.main_cluster.paths_to_ignore", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
-				errContains: "Config.Vault.MainCluster.PathsToIgnore must contain unique items",
-			},
-			{
-				name: "mautual execlusive paths in vault.main_cluster.paths_to_replicate and vault.main_cluster.paths_to_ignore",
-				setFields: updateAndReturnMap(
-					updateAndReturnMap(validAppConfig, "vault.main_cluster.paths_to_replicate", []string{"secret/data/test1", "secret/data/test3"}),
-					"vault.main_cluster.paths_to_ignore", []string{"secret/data/test4", "secret/data/test3"},
-				),
-				errContains: "Config.Vault.MainCluster.PathsToIgnore must not contain items that are also in PathsToReplicate, Config.Vault.MainCluster.PathsToReplicate must not contain items that are also in PathsToReplicate",
 			},
 			{
 				name:        "replica_clusters must not be empty",
@@ -343,51 +376,16 @@ func TestConfigurationValidation(t *testing.T) {
 	})
 }
 
-func TestMainCluster_MapToVaultConfig(t *testing.T) {
-	main := &MainCluster{
-		Address:          "http://vault:8200",
-		AppRoleID:        "role",
-		AppRoleSecret:    "secret",
-		AppRoleMount:     "approle-team1",
-		TLSSkipVerify:    true,
-		TLSCertFile:      "/path/to/cert.pem",
-		PathsToReplicate: []string{"secret/data/a"},
-		PathsToIgnore:    []string{"secret/data/b"},
+func deleteFromMap(m configFields, keys ...string) configFields {
+	clonedMap := maps.Clone(m)
+	for _, argument := range keys {
+		delete(clonedMap, argument)
 	}
-
-	want := &VaultConfig{
-		Address:       main.Address,
-		AppRoleID:     main.AppRoleID,
-		AppRoleSecret: main.AppRoleSecret,
-		AppRoleMount:  main.AppRoleMount,
-		TLSSkipVerify: main.TLSSkipVerify,
-		TLSCertFile:   main.TLSCertFile,
-	}
-
-	got := main.MapToVaultConfig()
-	require.Equal(t, want, got)
+	return clonedMap
 }
 
-func TestReplicaCluster_MapToVaultConfig(t *testing.T) {
-	replica := &ReplicaCluster{
-		Name:          "replica-1",
-		Address:       "http://vault-replica:8200",
-		AppRoleID:     "role-replica",
-		AppRoleSecret: "secret-replica",
-		AppRoleMount:  "myappmount",
-		TLSSkipVerify: false,
-		TLSCertFile:   "/path/to/replica-cert.pem",
-	}
-
-	want := &VaultConfig{
-		Address:       replica.Address,
-		AppRoleID:     replica.AppRoleID,
-		AppRoleSecret: replica.AppRoleSecret,
-		AppRoleMount:  replica.AppRoleMount,
-		TLSSkipVerify: replica.TLSSkipVerify,
-		TLSCertFile:   replica.TLSCertFile,
-	}
-
-	got := replica.MapToVaultConfig()
-	require.Equal(t, want, got)
+func updateAndReturnMap(m configFields, key string, value interface{}) configFields {
+	clonedMap := maps.Clone(m)
+	clonedMap[key] = value
+	return clonedMap
 }
