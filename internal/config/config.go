@@ -3,7 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
@@ -11,7 +13,7 @@ import (
 
 type Config struct {
 	ID       string   `mapstructure:"id" validate:"required"`
-	Interval int      `mapstructure:"interval" validate:"required"`
+	SyncRule SyncRule `mapstructure:"sync_rule" validate:"required"`
 	LogLevel string   `mapstructure:"log_level" validate:"required,oneof=trace debug info warn error fatal panic"`
 	Postgres Postgres `mapstructure:"postgres" validate:"required"`
 	Vault    Vault    `mapstructure:"vault" validate:"required"`
@@ -29,22 +31,11 @@ type Postgres struct {
 }
 
 type Vault struct {
-	MainCluster     MainCluster      `mapstructure:"main_cluster" validate:"required"`
-	ReplicaClusters []ReplicaCluster `mapstructure:"replica_clusters" validate:"required,min=1,dive"`
+	MainCluster     VaultClusterConfig   `mapstructure:"main_cluster" validate:"required"`
+	ReplicaClusters []VaultClusterConfig `mapstructure:"replica_clusters" validate:"required,min=1,dive"`
 }
 
-type MainCluster struct {
-	Address          string   `mapstructure:"address" validate:"required,url"`
-	AppRoleID        string   `mapstructure:"app_role_id" validate:"required"`
-	AppRoleSecret    string   `mapstructure:"app_role_secret" validate:"required"`
-	AppRoleMount     string   `mapstructure:"app_role_mount"`
-	TLSSkipVerify    bool     `mapstructure:"tls_skip_verify" validate:"boolean"`
-	TLSCertFile      string   `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
-	PathsToReplicate []string `mapstructure:"paths_to_replicate" validate:"unique"`
-	PathsToIgnore    []string `mapstructure:"paths_to_ignore" validate:"unique"`
-}
-
-type ReplicaCluster struct {
+type VaultClusterConfig struct {
 	Name          string `mapstructure:"name" validate:"required"`
 	Address       string `mapstructure:"address" validate:"required,url"`
 	AppRoleID     string `mapstructure:"app_role_id" validate:"required"`
@@ -54,33 +45,75 @@ type ReplicaCluster struct {
 	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
 }
 
-type VaultConfig struct {
-	Address       string `mapstructure:"address" validate:"required,url"`
-	AppRoleID     string `mapstructure:"app_role_id" validate:"required"`
-	AppRoleSecret string `mapstructure:"app_role_secret" validate:"required"`
-	AppRoleMount  string `mapstructure:"app_role_mount"`
-	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
-	TLSCertFile   string `mapstructure:"tls_cert_file" validate:"omitempty,filepath"`
+type SyncRule struct {
+	Interval         string   `mapstructure:"interval" validate:"required,period_regex,period_limit_max=24h,period_limit_min=60s"`
+	KvMounts         []string `mapstructure:"kv_mounts" validate:"required,min=1,unique"`
+	PathsToReplicate []string `mapstructure:"paths_to_replicate" validate:"omitempty,min=0,unique"`
+	PathsToIgnore    []string `mapstructure:"paths_to_ignore" validate:"omitempty,unique,min=0"`
+}
+
+func (syncRule *SyncRule) GetInterval() time.Duration {
+	fmt.Println("Calculating interval for sync rule:", syncRule.Interval)
+	duration, _ := time.ParseDuration(syncRule.Interval)
+	return duration
 }
 
 var validate = validator.New()
 
 func init() {
-	validate.RegisterStructValidation(MainClusterValidation, MainCluster{})
+	validate.RegisterStructValidation(syncRuleValidation, SyncRule{})
+	validate.RegisterValidation("period_regex", periodRegexValidator)
+	validate.RegisterValidation("period_limit_max", periodLimitMaxValidator)
+	validate.RegisterValidation("period_limit_min", periodLimitMinValidator)
 }
 
-func MainClusterValidation(sl validator.StructLevel) {
-	cluster := sl.Current().Interface().(MainCluster)
+var periodRegex = regexp.MustCompile(`^([0-9]+(s|m|h))$`)
 
-	set := make(map[string]struct{}, len(cluster.PathsToReplicate))
-	for _, p := range cluster.PathsToReplicate {
+func periodRegexValidator(fl validator.FieldLevel) bool {
+	return periodRegex.MatchString(fl.Field().String())
+}
+
+func periodLimitMaxValidator(fl validator.FieldLevel) bool {
+	fieldValue := fl.Field().String()
+	fieldParam := fl.Param()
+	maxDuration, err := time.ParseDuration(fieldParam)
+	if err != nil {
+		return false
+	}
+	duration, err := time.ParseDuration(fieldValue)
+	if err != nil {
+		return false
+	}
+	return duration <= maxDuration
+}
+
+func periodLimitMinValidator(fl validator.FieldLevel) bool {
+	fieldValue := fl.Field().String()
+	fieldParam := fl.Param()
+	minimumDuration, err := time.ParseDuration(fieldParam)
+	if err != nil {
+		return false
+	}
+	duration, err := time.ParseDuration(fieldValue)
+	if err != nil {
+		fmt.Println("Error parsing field value as duration:", err)
+		return false
+	}
+	return duration >= minimumDuration
+}
+
+func syncRuleValidation(sl validator.StructLevel) {
+	syncRule := sl.Current().Interface().(SyncRule)
+
+	set := make(map[string]struct{}, len(syncRule.PathsToReplicate))
+	for _, p := range syncRule.PathsToReplicate {
 		set[p] = struct{}{}
 	}
 
-	for _, p := range cluster.PathsToIgnore {
+	for _, p := range syncRule.PathsToIgnore {
 		if _, exists := set[p]; exists {
-			sl.ReportError(cluster.PathsToIgnore, "PathsToIgnore", "paths_to_ignore", "no_overlap", "")
-			sl.ReportError(cluster.PathsToReplicate, "PathsToReplicate", "paths_to_replicate", "no_overlap", "")
+			sl.ReportError(syncRule.PathsToIgnore, "PathsToIgnore", "paths_to_ignore", "no_overlap", "")
+			sl.ReportError(syncRule.PathsToReplicate, "PathsToReplicate", "paths_to_replicate", "no_overlap", "")
 			break
 		}
 	}
@@ -108,28 +141,6 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
-}
-
-func (c *MainCluster) MapToVaultConfig() *VaultConfig {
-	return &VaultConfig{
-		Address:       c.Address,
-		AppRoleID:     c.AppRoleID,
-		AppRoleSecret: c.AppRoleSecret,
-		AppRoleMount:  c.AppRoleMount,
-		TLSSkipVerify: c.TLSSkipVerify,
-		TLSCertFile:   c.TLSCertFile,
-	}
-}
-
-func (c *ReplicaCluster) MapToVaultConfig() *VaultConfig {
-	return &VaultConfig{
-		Address:       c.Address,
-		AppRoleID:     c.AppRoleID,
-		AppRoleSecret: c.AppRoleSecret,
-		AppRoleMount:  c.AppRoleMount,
-		TLSSkipVerify: c.TLSSkipVerify,
-		TLSCertFile:   c.TLSCertFile,
-	}
 }
 
 func validateConfig(cfg Config) error {
@@ -168,6 +179,12 @@ func validateConfig(cfg Config) error {
 			msg = fmt.Sprintf("%s must be one of [%s]", namespace, param)
 		case "filepath":
 			msg = fmt.Sprintf("%s must be a valid file path", namespace)
+		case "period_limit_min":
+			msg = fmt.Sprintf("%s must be greater than or equal to %s", namespace, param)
+		case "period_limit_max":
+			msg = fmt.Sprintf("%s must be less than or equal to %s", namespace, param)
+		case "period_regex":
+			msg = fmt.Sprintf("%s must match the format of a valid duration (e.g., 1s, 5m, 2h)", namespace)
 		case "no_overlap":
 			otherField := "PathsToReplicate"
 			if fieldError.StructField() == otherField {

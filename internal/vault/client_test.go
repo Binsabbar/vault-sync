@@ -18,11 +18,11 @@ import (
 type MultiClusterVaultClientTestSuite struct {
 	suite.Suite
 	mainVault  *testutil.VaultHelper
-	mainConfig *config.MainCluster
+	mainConfig *config.VaultClusterConfig
 
 	replica1Vault *testutil.VaultHelper
 	replica2Vault *testutil.VaultHelper
-	replicaConfig []*config.ReplicaCluster
+	replicaConfig []*config.VaultClusterConfig
 
 	ctx context.Context
 }
@@ -125,7 +125,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient()
 		suite.Run("replica 1 cluster authentication fails", func() {
 			brokenReplica1Config := testutil.CopyStruct(suite.replicaConfig[0])
 			brokenReplica1Config.AppRoleSecret = "invalid-secret"
-			_, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, []*config.ReplicaCluster{brokenReplica1Config})
+			_, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, []*config.VaultClusterConfig{brokenReplica1Config})
 
 			suite.ErrorContains(err, fmt.Sprintf("failed to authenticate with role ID: %s at mount %s.", brokenReplica1Config.AppRoleID, brokenReplica1Config.AppRoleMount))
 		})
@@ -133,7 +133,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestCreateNewMultiClusterClient()
 		suite.Run("replica 2 cluster authentication fails", func() {
 			brokenReplica2Config := testutil.CopyStruct(suite.replicaConfig[1])
 			brokenReplica2Config.AppRoleSecret = "invalid-secret"
-			_, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, []*config.ReplicaCluster{brokenReplica2Config})
+			_, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, []*config.VaultClusterConfig{brokenReplica2Config})
 
 			suite.ErrorContains(err, fmt.Sprintf("failed to authenticate with role ID: %s at mount %s.", brokenReplica2Config.AppRoleID, brokenReplica2Config.AppRoleMount))
 		})
@@ -584,15 +584,16 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 
 }
 
-func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestSuite() (*config.MainCluster, []*config.ReplicaCluster) {
-	mainConfig := &config.MainCluster{
+func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestSuite() (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
+	mainConfig := &config.VaultClusterConfig{
+		Name:          suite.mainVault.Config.ClusterName,
 		Address:       suite.mainVault.Config.Address,
 		AppRoleMount:  "approle",
 		TLSSkipVerify: true,
 	}
 	mainConfig.AppRoleID, mainConfig.AppRoleSecret, _ = suite.mainVault.CreateApproleWithReadPermissions(suite.ctx, "main", mounts...)
 
-	replica1Config := &config.ReplicaCluster{
+	replica1Config := &config.VaultClusterConfig{
 		Name:          suite.replica1Vault.Config.ClusterName,
 		Address:       suite.replica1Vault.Config.Address,
 		AppRoleMount:  "approle",
@@ -600,7 +601,7 @@ func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestS
 	}
 	replica1Config.AppRoleID, replica1Config.AppRoleSecret, _ = suite.replica1Vault.CreateApproleWithRWPermissions(suite.ctx, "replica-1", mounts...)
 
-	replica2Config := &config.ReplicaCluster{
+	replica2Config := &config.VaultClusterConfig{
 		Name:          suite.replica2Vault.Config.ClusterName,
 		Address:       suite.replica2Vault.Config.Address,
 		AppRoleMount:  "approle",
@@ -608,5 +609,5 @@ func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestS
 	}
 	replica2Config.AppRoleID, replica2Config.AppRoleSecret, _ = suite.replica2Vault.CreateApproleWithRWPermissions(suite.ctx, "replica-2", mounts...)
 
-	return mainConfig, []*config.ReplicaCluster{replica1Config, replica2Config}
+	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
 }
