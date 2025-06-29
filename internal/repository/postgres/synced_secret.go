@@ -32,7 +32,7 @@ type PostgreSQLSyncedSecretRepository struct {
 }
 
 type SyncedSecretResult interface {
-	*models.SyncedSecret | []models.SyncedSecret
+	*models.SyncedSecret | []*models.SyncedSecret
 }
 
 // NewPostgreSQLSyncedSecretRepository creates a new PostgreSQLSyncedSecretRepository instance
@@ -79,11 +79,11 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		Str("destinationCluster", destinationCluster).
 		Logger()
 
-	dbOperation := func() (any, error) {
-		var secret models.SyncedSecret
+	dbOperation := func() (*models.SyncedSecret, error) {
+		var secret *models.SyncedSecret = &models.SyncedSecret{}
 		query := `SELECT * FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
 
-		err := repo.psql.DB.Get(&secret, query, backend, path, destinationCluster)
+		err := repo.psql.DB.Get(secret, query, backend, path, destinationCluster)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				logger.Debug().Msg("Synced secret not found")
@@ -94,10 +94,10 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		}
 
 		logger.Debug().Msg("Successfully retrieved synced secret")
-		return &secret, nil
+		return secret, nil
 	}
 
-	secret, err := executeOperationInCircuitBreaker[*models.SyncedSecret](repo, dbOperation)
+	secret, err := executeOperationInCircuitBreaker(repo, dbOperation)
 	if err != nil {
 		return nil, err
 	}
@@ -105,9 +105,9 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 	return secret, nil
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.SyncedSecret, error) {
-	dbOperation := func() (any, error) {
-		var secrets = make([]models.SyncedSecret, 0)
+func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]*models.SyncedSecret, error) {
+	dbOperation := func() ([]*models.SyncedSecret, error) {
+		var secrets = make([]*models.SyncedSecret, 0)
 		query := `SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`
 		err := repo.psql.DB.Select(&secrets, query)
 		if err != nil {
@@ -119,9 +119,9 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.Synce
 		return secrets, nil
 	}
 
-	secrets, err := executeOperationInCircuitBreaker[[]models.SyncedSecret](repo, dbOperation)
+	secrets, err := executeOperationInCircuitBreaker(repo, dbOperation)
 	if err != nil {
-		return []models.SyncedSecret{}, err
+		return []*models.SyncedSecret{}, err
 	}
 
 	repo.logger.Debug().Int("count", len(secrets)).
@@ -130,7 +130,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]models.Synce
 	return secrets, nil
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret models.SyncedSecret) error {
+func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret *models.SyncedSecret) error {
 	logger := repo.logger.With().
 		Str("event", "update_synced_secret_status").
 		Str("backend", secret.SecretBackend).
@@ -138,7 +138,7 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret mo
 		Str("destinationCluster", secret.DestinationCluster).
 		Logger()
 
-	dbOperation := func() (any, error) {
+	dbOperation := func() (*models.SyncedSecret, error) {
 		query := `
             INSERT INTO synced_secrets (
                 secret_backend,
@@ -161,7 +161,7 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret mo
                 error_message = EXCLUDED.error_message
         `
 
-		result, err := repo.psql.DB.NamedExec(query, secret)
+		result, err := repo.psql.DB.NamedExec(query, *secret)
 		if err != nil {
 			logger.Error().Err(err).Msg("error occurred while updating synced secret status")
 			return nil, fmt.Errorf("error occurred while updating synced secret status: %w", err)
@@ -174,10 +174,10 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret mo
 		}
 
 		logger.Debug().Int64("rows_affected", rowsAffected).Msg("Successfully updated synced secret status")
-		return &secret, nil
+		return secret, nil
 	}
 
-	_, err := executeOperationInCircuitBreaker[*models.SyncedSecret](repo, dbOperation)
+	_, err := executeOperationInCircuitBreaker(repo, dbOperation)
 	return err
 }
 
@@ -190,7 +190,7 @@ func (repo *PostgreSQLSyncedSecretRepository) Close() error {
 
 // executeOperationInCircuitBreaker executes the provided database operation within a circuit breaker context.
 // It retries the operation using an exponential backoff strategy if it fails.
-func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, operation func() (any, error)) (T, error) {
+func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, operation func() (T, error)) (T, error) {
 	var opsResult T
 
 	result, err := repo.circuitBreaker.Execute(func() (any, error) {
@@ -201,7 +201,7 @@ func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSync
 		return opsResult, err
 	}
 
-	if result == nil || reflect.ValueOf(result).IsNil() {
+	if result == nil || (reflect.ValueOf(result).Kind() == reflect.Ptr && reflect.ValueOf(result).IsNil()) {
 		return opsResult, ErrSecretNotFound
 	}
 
