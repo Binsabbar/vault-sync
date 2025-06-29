@@ -104,6 +104,26 @@ func (suite *ClusterManagerTestSuite) TestEnsureValidToken() {
 					return err
 				},
 			},
+			{
+				name: "readSecret",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.readSecret(suite.ctx, "my-mount", "my-secret")
+					return err
+				},
+			},
+			{
+				name: "writeSecret",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.writeSecret(suite.ctx, "my-mount", "my-secret", map[string]interface{}{"key": "value"})
+					return err
+				},
+			},
+			{
+				name: "deleteSecret",
+				invokeMethod: func(cm *clusterManager) error {
+					return cm.deleteSecret(suite.ctx, "my-mount", "my-secret")
+				},
+			},
 		}
 		for _, method := range methodsToCheck {
 			suite.Run(fmt.Sprintf("returns error for method %s if token not valid", method.name), func() {
