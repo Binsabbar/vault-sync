@@ -331,3 +331,32 @@ func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string
 	logger.Info().Int64("version", res.Data.Version).Msg("Successfully wrote secret to cluster")
 	return res.Data.Version, nil
 }
+
+// deleteSecret deletes a secret from the cluster
+func (cm *clusterManager) deleteSecret(ctx context.Context, mount, keyPath string) error {
+	logger := cm.logger.With().
+		Str("event", "delete_secret").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Logger()
+
+	if err := cm.ensureValidToken(ctx); err != nil {
+		logger.Error().Err(err).Msg("Failed to ensure valid token")
+		return fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
+	logger.Debug().Msg("Deleting secret from cluster")
+	_, err := cm.client.Secrets.KvV2DeleteMetadataAndAllVersions(ctx, keyPath, vault.WithMountPath(mount))
+	if err != nil {
+		// Check if it's a 404 error (secret doesn't exist)
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no such path") {
+			logger.Debug().Msg("Secret does not exist, treating as successful deletion")
+			return err // Return the error so caller can check and handle as "not found"
+		}
+		logger.Error().Err(err).Msg("Failed to delete secret")
+		return fmt.Errorf("failed to delete secret from %s/%s: %w", mount, keyPath, err)
+	}
+
+	logger.Info().Msg("Successfully deleted secret from cluster")
+	return nil
+}

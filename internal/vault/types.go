@@ -1,12 +1,24 @@
 package vault
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/hashicorp/vault-client-go"
 	"github.com/hashicorp/vault-client-go/schema"
+)
+
+const (
+	// Error messages that indicate "not found"
+	ErrorNotFound404 = "404"
+	ErrorNoSuchPath  = "no such path"
+
+	// Log messages
+	LogSecretNotFound  = "Secret does not exist in replica cluster"
+	LogSyncStarted     = "Starting secret synchronization from main cluster to replicas"
+	LogDeletionStarted = "Starting secret deletion from replica clusters"
 )
 
 // VaultSecretResponse represents the response structure for a Vault secret read operation.
@@ -31,8 +43,6 @@ type VaultSecretEmbededMetadata struct {
 }
 
 // VaultSecretMetadataResponse represents the response structure for a Vault secret metadata read operation.
-// It includes metadata about the secret, such as current version, max versions, oldest version,
-// creation time, update time, and a map of versions.
 type VaultSecretMetadataResponse struct {
 	CurrentVersion int64                                 `json:"current_version"`
 	MaxVersions    int64                                 `json:"max_versions"`
@@ -42,7 +52,6 @@ type VaultSecretMetadataResponse struct {
 	Versions       map[string]VaultSecretEmbededMetadata `json:"versions"`
 }
 
-// parsing functions to convert Vault responses into our custom types
 func parseVaultSecretResponse(data *vault.Response[schema.KvV2ReadResponse]) (*VaultSecretResponse, error) {
 	jsonData, err := json.Marshal(data.Data)
 	if err != nil {
@@ -110,4 +119,31 @@ func (nt *NullableTime) UnmarshalJSON(data []byte) error {
 
 	nt.Time = &parsedTime
 	return nil
+}
+
+// syncResultAggregator is a generic type that aggregates results from multiple goroutines operation.
+type syncResultAggregator[T any] struct {
+	results     []T
+	resultsChan chan T
+	count       int
+}
+
+func newSyncResultAggregator[T any](count int) *syncResultAggregator[T] {
+	return &syncResultAggregator[T]{
+		results:     make([]T, 0, count),
+		resultsChan: make(chan T, count),
+		count:       count,
+	}
+}
+
+func (rc *syncResultAggregator[T]) aggregate(ctx context.Context) ([]T, error) {
+	for i := 0; i < rc.count; i++ {
+		select {
+		case result := <-rc.resultsChan:
+			rc.results = append(rc.results, result)
+		case <-ctx.Done():
+			return nil, fmt.Errorf("operation cancelled: %w", ctx.Err())
+		}
+	}
+	return rc.results, nil
 }
