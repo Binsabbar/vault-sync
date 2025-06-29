@@ -290,7 +290,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() {
 			}
 			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
 
-			err := repo.UpdateSyncedSecretStatus(tc.secretToUpdate)
+			err := repo.UpdateSyncedSecretStatus(&tc.secretToUpdate)
 
 			if tc.expectedErr != nil {
 				suite.ErrorIs(err, tc.expectedErr, "Expected error does not match")
@@ -348,7 +348,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 		}
 	}
 
-	secret := models.SyncedSecret{
+	secret := &models.SyncedSecret{
 		SecretBackend:      "kv",
 		SecretPath:         "test/path",
 		SourceVersion:      1,
@@ -438,7 +438,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 
 		var err error
-		var result []models.SyncedSecret
+		var result []*models.SyncedSecret
 		suite.Eventually(func() bool {
 			result, err = repo.GetSyncedSecrets()
 			return err == nil && result != nil
