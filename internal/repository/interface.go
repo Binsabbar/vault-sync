@@ -6,5 +6,6 @@ type SyncedSecretRepository interface {
 	GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error)
 	UpdateSyncedSecretStatus(secret *models.SyncedSecret) error
 	GetSyncedSecrets() ([]*models.SyncedSecret, error)
+	DeleteSyncedSecret(backend, path, destinationCluster string) error
 	Close() error
 }

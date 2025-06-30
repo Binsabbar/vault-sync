@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	ErrSecretNotFound      = errors.New("synced secret not found")
-	ErrDatabaseUnavailable = errors.New("database is unavailable")
-	ErrDatabaseGeneric     = errors.New("database error occurred while processing request")
+	ErrSecretNotFound         = errors.New("synced secret not found")
+	ErrDatabaseUnavailable    = errors.New("database is unavailable")
+	ErrDatabaseGeneric        = errors.New("database error occurred while processing request")
+	ErrInvalidQueryParameters = errors.New("invalid query parameters provided for synced secret operation")
 )
 
 type PostgreSQLSyncedSecretRepository struct {
@@ -72,12 +73,11 @@ func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *Post
 }
 
 func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
-	logger := repo.logger.With().
-		Str("event", "get_synced_secret").
-		Str("backend", backend).
-		Str("path", path).
-		Str("destinationCluster", destinationCluster).
-		Logger()
+	logger := repo.createOperationLogger("get_synced_secret", backend, path, destinationCluster)
+	if err := validateQueryParameters(backend, path, destinationCluster); err != nil {
+		logger.Error().Err(err).Msg("invalid query parameters for getting synced secret")
+		return nil, err
+	}
 
 	dbOperation := func() (*models.SyncedSecret, error) {
 		var secret *models.SyncedSecret = &models.SyncedSecret{}
@@ -86,8 +86,8 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		err := repo.psql.DB.Get(secret, query, backend, path, destinationCluster)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				logger.Debug().Msg("Synced secret not found")
-				return nil, nil
+				logger.Debug().Msg(ErrSecretNotFound.Error())
+				return nil, ErrSecretNotFound
 			}
 			logger.Error().Err(err).Msg("error occurred while getting synced secret")
 			return nil, fmt.Errorf("error occurred while getting synced secret: %w", err)
@@ -97,7 +97,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		return secret, nil
 	}
 
-	secret, err := executeOperationInCircuitBreaker(repo, dbOperation)
+	secret, err := executeOperationInCircuitBreaker(repo, false, dbOperation)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]*models.Sync
 		return secrets, nil
 	}
 
-	secrets, err := executeOperationInCircuitBreaker(repo, dbOperation)
+	secrets, err := executeOperationInCircuitBreaker(repo, false, dbOperation)
 	if err != nil {
 		return []*models.SyncedSecret{}, err
 	}
@@ -131,12 +131,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]*models.Sync
 }
 
 func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret *models.SyncedSecret) error {
-	logger := repo.logger.With().
-		Str("event", "update_synced_secret_status").
-		Str("backend", secret.SecretBackend).
-		Str("path", secret.SecretPath).
-		Str("destinationCluster", secret.DestinationCluster).
-		Logger()
+	logger := repo.createOperationLogger("update_synced_secret_status", secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
 
 	dbOperation := func() (*models.SyncedSecret, error) {
 		query := `
@@ -177,7 +172,43 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret *m
 		return secret, nil
 	}
 
-	_, err := executeOperationInCircuitBreaker(repo, dbOperation)
+	_, err := executeOperationInCircuitBreaker(repo, true, dbOperation)
+	return err
+}
+
+func (repo *PostgreSQLSyncedSecretRepository) DeleteSyncedSecret(backend, path, destinationCluster string) error {
+	logger := repo.createOperationLogger("delete_synced_secret", backend, path, destinationCluster)
+
+	if err := validateQueryParameters(backend, path, destinationCluster); err != nil {
+		logger.Error().Err(err).Msg("invalid query parameters for deleting synced secret")
+		return err
+	}
+
+	dbOperation := func() (*models.SyncedSecret, error) {
+		query := `DELETE FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
+
+		result, err := repo.psql.DB.Exec(query, backend, path, destinationCluster)
+		if err != nil {
+			logger.Error().Err(err).Msg("error occurred while deleting synced secret")
+			return nil, fmt.Errorf("error occurred while deleting synced secret: %w", err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			logger.Error().Err(err).Msg("error occurred while checking rows affected")
+			return nil, fmt.Errorf("error occurred while checking rows affected: %w", err)
+		}
+
+		if rowsAffected == 0 {
+			logger.Debug().Msg("No synced secret found to delete")
+			return nil, nil
+		}
+
+		logger.Debug().Int64("rows_affected", rowsAffected).Msg("Successfully deleted synced secret")
+		return nil, nil
+	}
+
+	_, err := executeOperationInCircuitBreaker(repo, true, dbOperation)
 	return err
 }
 
@@ -190,7 +221,7 @@ func (repo *PostgreSQLSyncedSecretRepository) Close() error {
 
 // executeOperationInCircuitBreaker executes the provided database operation within a circuit breaker context.
 // It retries the operation using an exponential backoff strategy if it fails.
-func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, operation func() (T, error)) (T, error) {
+func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, nullableResult bool, operation func() (T, error)) (T, error) {
 	var opsResult T
 
 	result, err := repo.circuitBreaker.Execute(func() (any, error) {
@@ -202,6 +233,9 @@ func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSync
 	}
 
 	if result == nil || (reflect.ValueOf(result).Kind() == reflect.Ptr && reflect.ValueOf(result).IsNil()) {
+		if nullableResult {
+			return opsResult, nil
+		}
 		return opsResult, ErrSecretNotFound
 	}
 
@@ -246,4 +280,20 @@ func newBackoffStrategy() []backoff.RetryOption {
 		maxElapsedTime,
 		maxRetires,
 	}
+}
+
+func (repo *PostgreSQLSyncedSecretRepository) createOperationLogger(event, backend, path, destinationCluster string) zerolog.Logger {
+	return repo.logger.With().
+		Str("event", event).
+		Str("backend", backend).
+		Str("path", path).
+		Str("destinationCluster", destinationCluster).
+		Logger()
+}
+
+func validateQueryParameters(backend, path, destinationCluster string) error {
+	if backend == "" || path == "" || destinationCluster == "" {
+		return ErrInvalidQueryParameters
+	}
+	return nil
 }
