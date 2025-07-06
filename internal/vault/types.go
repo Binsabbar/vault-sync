@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"vault-sync/internal/models"
 
 	"github.com/hashicorp/vault-client-go"
 	"github.com/hashicorp/vault-client-go/schema"
@@ -21,6 +22,8 @@ const (
 	LogDeletionStarted = "Starting secret deletion from replica clusters"
 )
 
+// ************
+//
 // VaultSecretResponse represents the response structure for a Vault secret read operation.
 // It includes the secret data and metadata.
 //
@@ -30,6 +33,8 @@ const (
 // The `Metadata` field is embedded within the `VaultSecretResponse` struct, allowing for easy access to metadata fields.
 // The `CreatedTime` field is a standard time.Time type, while the `DeletionTime` field is a custom `NullableTime` type
 // that can represent a time.Time value that may be null.
+//
+// ***********
 type VaultSecretResponse struct {
 	Data     map[string]interface{}     `json:"data"`
 	Metadata VaultSecretEmbededMetadata `json:"metadata"`
@@ -80,7 +85,11 @@ func parseVaultSecretMetadataResponse(data *vault.Response[schema.KvV2ReadMetada
 	return &vaultResponse, nil
 }
 
+// ***********
+//
 // NullableTime is a custom type that can be used to represent a time.Time value that may be null.
+//
+// ***********
 type NullableTime struct {
 	*time.Time
 }
@@ -121,7 +130,11 @@ func (nt *NullableTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ************
+//
 // syncResultAggregator is a generic type that aggregates results from multiple goroutines operation.
+//
+// ************
 type syncResultAggregator[T any] struct {
 	results     []T
 	resultsChan chan T
@@ -146,4 +159,19 @@ func (rc *syncResultAggregator[T]) aggregate(ctx context.Context) ([]T, error) {
 		}
 	}
 	return rc.results, nil
+}
+
+// ************
+//
+// replicaSyncOperationResult is an interface that defines the methods required for a result
+// of a replica synchronization operation.
+//
+// ************
+type replicaSyncOperationResult interface {
+	*models.SyncedSecret | *models.SyncSecretDeletionResult
+	SetStatus(status models.SyncStatus)
+	SetErrorMessage(msg *string)
+	SetLastSuccessAttempt(t *time.Time)
+	GetStatus() models.SyncStatus
+	GetDestinationCluster() string
 }
