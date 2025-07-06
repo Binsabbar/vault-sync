@@ -463,6 +463,87 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 	}
 }
 
+func (suite *MultiClusterVaultClientTestSuite) TestSecretExists() {
+	mount := "team-a"
+	keyPath := "app/database"
+	secret := map[string]string{
+		"host":     "main-db.example.com",
+		"username": "admin",
+		"password": "secret123",
+	}
+
+	suite.Run("returns true when secret exists", func() {
+		suite.mainVault.WriteSecret(suite.ctx, mount, keyPath, secret)
+
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		exists, err := client.SecretExists(suite.ctx, mount, keyPath)
+
+		suite.True(exists)
+	})
+
+	suite.Run("returns false when secret does not exist", func() {
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		exists, err := client.SecretExists(suite.ctx, mount, "non/existent/secret")
+
+		suite.NoError(err)
+		suite.False(exists)
+	})
+
+	suite.Run("returns error", func() {
+		suite.Run("for empty mount", func() {
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			exists, err := client.SecretExists(suite.ctx, "", keyPath)
+
+			suite.Error(err)
+			suite.ErrorContains(err, "mount cannot be empty")
+			suite.False(exists)
+		})
+
+		suite.Run("for empty key path", func() {
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			exists, err := client.SecretExists(suite.ctx, mount, "")
+
+			suite.Error(err)
+			suite.ErrorContains(err, "key path cannot be empty")
+			suite.False(exists)
+		})
+
+		suite.Run("when main cluster is unavailable", func() {
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			twoSeconds := 2 * time.Second
+			suite.mainVault.Stop(suite.ctx, &twoSeconds)
+
+			exists, err := client.SecretExists(suite.ctx, mount, keyPath)
+
+			suite.Error(err)
+			suite.False(exists)
+		})
+	})
+
+	suite.Run("checks secret existence only in main cluster", func() {
+		suite.replica1Vault.WriteSecret(suite.ctx, mount, keyPath, secret)
+		suite.replica2Vault.WriteSecret(suite.ctx, mount, keyPath, secret)
+
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		exists, err := client.SecretExists(suite.ctx, mount, keyPath)
+
+		suite.NoError(err)
+		suite.False(exists)
+	})
+}
+
 func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 	mount := "team-a"
 	keyPath := "app/database"
