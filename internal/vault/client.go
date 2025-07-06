@@ -134,6 +134,28 @@ func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount 
 	return keys, nil
 }
 
+// SecretExists checks if a secret exists at the given mount and key path in the main cluster.
+// It returns true if the secret exists, false if it doesn't exist, and an error for other failures.
+// This operation is only performed on the main cluster for discovery purposes.
+func (mc *MultiClusterVaultClient) SecretExists(ctx context.Context, mount, keyPath string) (bool, error) {
+	logger := mc.createOperationLogger("secret_exists", mount, keyPath)
+
+	if err := validateMountAndKeyPath(mount, keyPath); err != nil {
+		logger.Error().Err(err).Msg("Invalid mount or key path")
+		return false, err
+	}
+
+	logger.Debug().Msg("Checking if secret exists in main cluster")
+	exists, err := mc.mainCluster.secretExists(ctx, mount, keyPath)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to check secret existence")
+		return false, fmt.Errorf("failed to check if secret exists at %s/%s: %w", mount, keyPath, err)
+	}
+
+	logger.Debug().Bool("exists", exists).Msg("Completed secret existence check")
+	return exists, nil
+}
+
 // SyncSecretToReplicas reads a secret from the main cluster and synchronizes it to all replica clusters.
 // It returns a list of SyncedSecret objects representing the sync status for each replica.
 // The method handles version conflicts, missing secrets, and per-replica failures gracefully.
