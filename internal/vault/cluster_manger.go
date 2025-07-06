@@ -348,13 +348,8 @@ func (cm *clusterManager) deleteSecret(ctx context.Context, mount, keyPath strin
 	logger.Debug().Msg("Deleting secret from cluster")
 	_, err := cm.client.Secrets.KvV2DeleteMetadataAndAllVersions(ctx, keyPath, vault.WithMountPath(mount))
 	if err != nil {
-		// Check if it's a 404 error (secret doesn't exist)
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no such path") {
-			logger.Debug().Msg("Secret does not exist, treating as successful deletion")
-			return err // Return the error so caller can check and handle as "not found"
-		}
 		logger.Error().Err(err).Msg("Failed to delete secret")
-		return fmt.Errorf("failed to delete secret from %s/%s: %w", mount, keyPath, err)
+		return err
 	}
 
 	logger.Info().Msg("Successfully deleted secret from cluster")
