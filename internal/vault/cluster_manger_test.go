@@ -93,7 +93,7 @@ func (suite *ClusterManagerTestSuite) TestEnsureValidToken() {
 			{
 				name: "fetchKeysUnderMount",
 				invokeMethod: func(cm *clusterManager) error {
-					_, err := cm.fetchKeysUnderMount(suite.ctx, "my-mount")
+					_, err := cm.fetchKeysUnderMount(suite.ctx, "my-mount", func(path string) bool { return true })
 					return err
 				},
 			},
