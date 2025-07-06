@@ -283,6 +283,35 @@ func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPat
 	return metadata, nil
 }
 
+// secretExists checks if a secret exists at the given mount and key path
+func (cm *clusterManager) secretExists(ctx context.Context, mount, keyPath string) (bool, error) {
+	logger := cm.logger.With().
+		Str("event", "secret_exists").
+		Str("mount", mount).
+		Str("key_path", keyPath).
+		Logger()
+
+	if err := cm.ensureValidToken(ctx); err != nil {
+		logger.Error().Err(err).Msg("Failed to ensure valid token")
+		return false, err
+	}
+
+	logger.Debug().Msg("Checking secret existence in cluster")
+
+	_, err := cm.client.Secrets.KvV2ReadMetadata(ctx, keyPath, vault.WithMountPath(mount))
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no such path") {
+			logger.Debug().Msg("Secret does not exist")
+			return false, nil
+		}
+		logger.Error().Err(err).Msg("Failed to check secret existence")
+		return false, fmt.Errorf("failed to check secret existence: %w", err)
+	}
+
+	logger.Debug().Msg("Secret exists in cluster")
+	return true, nil
+}
+
 // readSecret reads secret data from the cluster
 func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string) (*VaultSecretResponse, error) {
 	logger := cm.logger.With().Str("event", "read_secret").
