@@ -4,10 +4,10 @@ package vault
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"vault-sync/internal/config"
 	"vault-sync/internal/models"
+	"vault-sync/pkg/converter"
 	"vault-sync/pkg/log"
 
 	"github.com/rs/zerolog"
@@ -151,17 +151,51 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 		return nil, err
 	}
 
-	if len(mc.replicaClusters) == 0 {
-		logger.Warn().Msg("No replica clusters configured, skipping synchronization")
-		return []*models.SyncedSecret{}, nil
+	replicaHandler := replicaSyncHandler[*models.SyncedSecret]{
+		operationType: operationTypeSync,
+		ctx:           ctx,
+		logger:        &logger,
+		sourceVersion: sourceSecret.Metadata.Version,
+		clusters:      mc.getReplicaNames(),
+		mount:         mount,
+		keyPath:       keyPath,
+		operationFunc: mc.syncSecretFuncFactory(sourceSecret.Data),
 	}
 
-	results, err := mc.executeSyncToReplicas(ctx, mount, keyPath, sourceSecret)
+	results, err := replicaHandler.executeSync()
 	if err != nil {
 		return nil, err
 	}
 
-	logOperationSummary(logger, results)
+	return results, nil
+}
+
+// DeleteSecretFromReplicas deletes a secret from all replica clusters for the given mount and key path.
+// It does not fail if the secret doesn't exist in the replicas, but logs the fact.
+func (mc *MultiClusterVaultClient) DeleteSecretFromReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncSecretDeletionResult, error) {
+	logger := mc.createOperationLogger("delete_secret_from_replicas", mount, keyPath)
+
+	if err := validateMountAndKeyPath(mount, keyPath); err != nil {
+		logger.Error().Err(err).Msg("Invalid mount or key path")
+		return nil, err
+	}
+
+	logger.Debug().Msg("Starting secret deletion from replica clusters")
+	replicaHandler := replicaSyncHandler[*models.SyncSecretDeletionResult]{
+		operationType: operationTypeDelete,
+		ctx:           ctx,
+		logger:        &logger,
+		sourceVersion: 0,
+		clusters:      mc.getReplicaNames(),
+		mount:         mount,
+		keyPath:       keyPath,
+		operationFunc: mc.deleteSecretFuncFactory(),
+	}
+
+	results, err := replicaHandler.executeSync()
+	if err != nil {
+		return nil, err
+	}
 
 	return results, nil
 }
@@ -174,96 +208,27 @@ func (mc *MultiClusterVaultClient) readSecretFromMainCluster(ctx context.Context
 	secretResponse, err := mc.mainCluster.readSecret(ctx, mount, keyPath)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to read secret data")
-		return nil, fmt.Errorf("failed to read secret data: %w", err)
+		return nil, err
 	}
 
 	return secretResponse, nil
 }
 
-// executeSyncToReplicas performs the actual synchronization of a secret to all replica clusters
-func (mc *MultiClusterVaultClient) executeSyncToReplicas(ctx context.Context, mount, keyPath string, sourceSecret *VaultSecretResponse) ([]*models.SyncedSecret, error) {
-	logger := mc.createOperationLogger("execute_sync_to_replicas", mount, keyPath)
-
-	collector := newSyncResultAggregator[*models.SyncedSecret](len(mc.replicaClusters))
-
-	for clusterName := range mc.replicaClusters {
-		go mc.syncToSingleReplica(ctx, clusterName, mount, keyPath, sourceSecret, collector.resultsChan)
-	}
-
-	results, err := collector.aggregate(ctx)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to collect sync results")
-		return nil, err
-	}
-
-	sortSyncResults(results)
-	return results, nil
-}
-
-// syncToSingleReplica synchronizes a secret to a single replica cluster
-func (mc *MultiClusterVaultClient) syncToSingleReplica(
-	ctx context.Context, clusterName, mount, keyPath string,
-	sourceSecret *VaultSecretResponse,
-	resultsChan chan<- *models.SyncedSecret,
-) {
-
-	logger := mc.createOperationLogger("sync_to_single_replica", mount, keyPath).With().Str("cluster", clusterName).Logger()
-
-	syncResult := createInitialSyncResult(clusterName, mount, keyPath, sourceSecret.Metadata.Version)
-	defer processResults(ctx, resultsChan, syncResult)
-
-	logger.Debug().Msg("Starting synchronization to replica cluster")
-
-	destinationVersion, err := mc.replicaClusters[clusterName].writeSecret(ctx, mount, keyPath, sourceSecret.Data)
-	errorMsg, hasError := checkSyncError(err, logger, clusterName, destinationVersion)
-	if hasError {
-		syncResult.Status = models.StatusFailed
-		syncResult.ErrorMessage = &errorMsg
-		return
-	}
-
-	now := time.Now()
-	syncResult.LastSyncSuccess = &now
-	syncResult.DestinationVersion = destinationVersion
-	syncResult.Status = models.StatusSuccess
-
-	logger.Debug().
-		Int64("source_version", sourceSecret.Metadata.Version).
-		Int64("destination_version", destinationVersion).
-		Msg("Successfully synchronized secret to replica cluster")
-}
-
-func checkSyncError(err error, logger zerolog.Logger, clusterName string, destinationVersion int64) (string, bool) {
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to write secret to replica cluster")
-		errorMsg := fmt.Sprintf("failed to write secret to cluster %s: %v", clusterName, err)
-		return errorMsg, true
-	}
-
-	if destinationVersion < 0 {
-		logger.Error().Int64("destination_version", destinationVersion).Msg("Invalid destination version after write")
-		errorMsg := fmt.Sprintf("invalid destination version %d after write to cluster %s", destinationVersion, clusterName)
-		return errorMsg, true
-	}
-
-	return "", false
-}
-
-func processResults[T models.SyncedSecret](ctx context.Context, resultsChan chan<- *T, syncResult *T) {
-	select {
-	case resultsChan <- syncResult:
-	case <-ctx.Done():
+func (mc *MultiClusterVaultClient) syncSecretFuncFactory(secretData map[string]interface{}) syncOperationFunc[*models.SyncedSecret] {
+	secretDataCopy := converter.DeepCopy(secretData)
+	return func(ctx context.Context, mount, keyPath, clusterName string, result *models.SyncedSecret) error {
+		destinationVersion, err := mc.replicaClusters[clusterName].writeSecret(ctx, mount, keyPath, secretDataCopy)
+		result.Status = models.StatusSuccess
+		result.DestinationVersion = destinationVersion
+		return err
 	}
 }
 
-func createInitialSyncResult(clusterName, mount, keyPath string, sourceVersion int64) *models.SyncedSecret {
-	return &models.SyncedSecret{
-		SecretBackend:      mount,
-		SecretPath:         keyPath,
-		SourceVersion:      sourceVersion,
-		DestinationCluster: clusterName,
-		LastSyncAttempt:    time.Now(),
-		Status:             models.StatusPending,
+func (mc *MultiClusterVaultClient) deleteSecretFuncFactory() syncOperationFunc[*models.SyncSecretDeletionResult] {
+	return func(ctx context.Context, mount, keyPath, clusterName string, result *models.SyncSecretDeletionResult) error {
+		err := mc.replicaClusters[clusterName].deleteSecret(ctx, mount, keyPath)
+		result.Status = models.StatusSuccess
+		return err
 	}
 }
 
@@ -276,4 +241,12 @@ func (mc *MultiClusterVaultClient) createOperationLogger(operation, mount, keyPa
 		logger = logger.Str("key_path", keyPath)
 	}
 	return logger.Logger()
+}
+
+func (mc *MultiClusterVaultClient) getReplicaNames() []string {
+	names := make([]string, 0, len(mc.replicaClusters))
+	for name := range mc.replicaClusters {
+		names = append(names, name)
+	}
+	return names
 }

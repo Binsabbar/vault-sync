@@ -2,7 +2,6 @@ package vault
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
@@ -59,29 +58,16 @@ func isNotFoundError(err error) bool {
 		strings.Contains(errStr, ErrorNoSuchPath)
 }
 
-// sortSyncResults sorts the sync results by destination cluster
-// This is useful for consistent logging and reporting
-func sortSyncResults(results []*models.SyncedSecret) {
-	slices.SortStableFunc(results, func(a, b *models.SyncedSecret) int {
-		if a.DestinationCluster < b.DestinationCluster {
-			return -1
-		} else if a.DestinationCluster > b.DestinationCluster {
-			return 1
-		}
-		return 0
-	})
-}
-
 // logOperationSummary logs a summary of the synchronization operation
 // It counts the number of successful, failed, and pending operations
 // and logs them using the provided logger.
-func logOperationSummary(logger zerolog.Logger, results []*models.SyncedSecret) {
+func logOperationSummary[T replicaSyncOperationResult](logger *zerolog.Logger, results []T) {
 	successCount := 0
 	failureCount := 0
 	pendingCount := 0
 
 	for _, result := range results {
-		switch result.Status {
+		switch result.GetStatus() {
 		case models.StatusSuccess:
 			successCount++
 		case models.StatusFailed:
@@ -96,4 +82,9 @@ func logOperationSummary(logger zerolog.Logger, results []*models.SyncedSecret) 
 		Int("failure_count", failureCount).
 		Int("pending_count", pendingCount).
 		Msg("Secret synchronization operation summary")
+}
+
+// Helper function to create string pointer
+func stringPtr(s string) *string {
+	return &s
 }
