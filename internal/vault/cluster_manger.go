@@ -176,7 +176,7 @@ func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[s
 }
 
 // fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
-func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string) ([]string, error) {
+func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error) {
 	logger := cm.logger.With().
 		Str("event", "fetch_keys_under_mount").
 		Str("mount", mount).
@@ -189,7 +189,7 @@ func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string)
 
 	logger.Debug().Msg("Listing keys under mount")
 	var allKeys []string
-	err := cm.listKeysRecursively(ctx, mount, "", &allKeys)
+	err := cm.listKeysRecursively(ctx, mount, "", &allKeys, shouldIncludeKeyPath)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to list keys recursively")
 		return nil, err
@@ -204,7 +204,7 @@ func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string)
 }
 
 // listKeysRecursively recursively lists all keys under a path
-func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string) error {
+func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string, shouldIncludeKeyPath func(path string) bool) error {
 	listPath := ""
 	if currentPath != "" {
 		listPath = currentPath
@@ -231,13 +231,17 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 		// If key ends with '/', it's a directory - recurse into it
 		if strings.HasSuffix(key, "/") {
 			dirPath := strings.TrimSuffix(keyPath, "/")
-			err := cm.listKeysRecursively(ctx, mount, dirPath, allKeys)
-			if err != nil {
-				return err
+			if shouldIncludeKeyPath(dirPath) {
+				err := cm.listKeysRecursively(ctx, mount, dirPath, allKeys, shouldIncludeKeyPath)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
-			keyPath = strings.TrimPrefix(keyPath, mount+"/")
-			*allKeys = append(*allKeys, keyPath)
+			if shouldIncludeKeyPath(keyPath) {
+				keyPath = strings.TrimPrefix(keyPath, mount+"/")
+				*allKeys = append(*allKeys, keyPath)
+			}
 		}
 	}
 

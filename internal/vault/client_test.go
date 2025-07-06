@@ -296,30 +296,55 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 		},
 	}
 
-	for _, tc := range testCases {
-		suite.Run(tc.name, func() {
-			// Setup: Create secrets in main cluster only
-			for secretPath, secretData := range tc.setupSecrets {
-				_, err := suite.mainVault.WriteSecret(suite.ctx, tc.mount, secretPath, secretData)
-				suite.NoError(err, "Failed to write secret %s", secretPath)
-			}
+	suite.Run("GetKeysUnderMount without filtering", func() {
+		for _, tc := range testCases {
+			suite.Run(tc.name, func() {
+				for secretPath, secretData := range tc.setupSecrets {
+					_, err := suite.mainVault.WriteSecret(suite.ctx, tc.mount, secretPath, secretData)
+					suite.NoError(err)
+				}
 
-			// Create client
-			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
-			suite.NoError(err)
-
-			// Test the function
-			keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount)
-
-			if tc.expectError {
-				suite.Error(err)
-				suite.ErrorContains(err, tc.errorMsg)
-			} else {
+				client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 				suite.NoError(err)
-				suite.ElementsMatch(tc.expectedKeys, keys)
-			}
+
+				keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount, func(path string) bool {
+					return true
+				})
+
+				if tc.expectError {
+					suite.Error(err)
+					suite.ErrorContains(err, tc.errorMsg)
+				} else {
+					suite.NoError(err)
+					suite.ElementsMatch(tc.expectedKeys, keys)
+				}
+			})
+		}
+	})
+
+	suite.Run("GetKeysUnderMount with filtering", func() {
+		for keypath, data := range map[string]map[string]string{
+			"production/infra/argocd":  {"key": "api-key-123"},
+			"production/infra/grafana": {"env": "production"},
+			"production/infra/thanos":  {"secret": "secret-key"},
+			"stage/app/app1":           {"db": "db-password"},
+			"stage/app/app2":           {"db": "db-password"},
+		} {
+			_, err := suite.mainVault.WriteSecret(suite.ctx, mounts[0], keypath, data)
+			suite.NoError(err)
+		}
+
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		keys, err := client.GetKeysUnderMount(suite.ctx, mounts[0], func(path string) bool {
+			fmt.Println("Checking path:", path)
+			return path != "production/infra/grafana" && path != "stage/app/app1"
 		})
-	}
+
+		suite.NoError(err)
+		suite.ElementsMatch([]string{"production/infra/argocd", "production/infra/thanos", "stage/app/app2"}, keys)
+	})
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
