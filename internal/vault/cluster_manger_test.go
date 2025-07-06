@@ -105,6 +105,13 @@ func (suite *ClusterManagerTestSuite) TestEnsureValidToken() {
 				},
 			},
 			{
+				name: "secretExists",
+				invokeMethod: func(cm *clusterManager) error {
+					_, err := cm.secretExists(suite.ctx, "my-mount", "my-secret")
+					return err
+				},
+			},
+			{
 				name: "readSecret",
 				invokeMethod: func(cm *clusterManager) error {
 					_, err := cm.readSecret(suite.ctx, "my-mount", "my-secret")
