@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -40,58 +39,79 @@ func (suite *MultiClusterVaultClientTestSuite) SetupSuite() {
 }
 
 func (suite *MultiClusterVaultClientTestSuite) SetupSubTest() {
-	wg := sync.WaitGroup{}
-	for _, vaultHelper := range []*testutil.VaultHelper{
-		suite.mainVault,
-		suite.replica1Vault,
-		suite.replica2Vault,
-	} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			vaultHelper.Start(suite.ctx)
-			err := vaultHelper.EnableAppRoleAuth(suite.ctx)
-			suite.NoError(err, "Failed to enable AppRole auth method")
-			err = vaultHelper.EnableKVv2Mounts(suite.ctx, mounts...)
-			suite.NoError(err, "Failed to enable KV v2 mounts")
-		}()
+	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
+	errors := make(chan error, len(helpers))
+
+	for _, vaultHelper := range helpers {
+		go func(vaultHelper *testutil.VaultHelper) {
+			err := vaultHelper.Start(suite.ctx)
+			if err != nil {
+				errors <- fmt.Errorf("failed to start vault helper: %w", err)
+				return
+			}
+			err1 := vaultHelper.EnableAppRoleAuth(suite.ctx)
+			err2 := vaultHelper.EnableKVv2Mounts(suite.ctx, mounts...)
+			if err1 != nil {
+				errors <- fmt.Errorf("failed to enable AppRole auth method: %w", err1)
+				return
+			} else if err2 != nil {
+				errors <- fmt.Errorf("failed to enable KV v2 mounts: %w", err2)
+				return
+			}
+			errors <- nil
+		}(vaultHelper)
 	}
-	wg.Wait()
+
+	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
+
 	suite.mainConfig, suite.replicaConfig = suite.setupMultiClusterVaultClientTestSuite()
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TearDownSuite() {
-
-	for _, vaultHelper := range []*testutil.VaultHelper{
-		suite.mainVault,
-		suite.replica1Vault,
-		suite.replica2Vault,
-	} {
-		if vaultHelper != nil {
-			err := vaultHelper.Terminate(suite.ctx)
-			suite.NoError(err, "Failed to terminate vault helper")
-			vaultHelper = nil
+	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
+	errors := make(chan error, len(helpers))
+	for _, helper := range helpers {
+		if helper != nil {
+			go func(helper *testutil.VaultHelper) {
+				err := helper.Terminate(suite.ctx)
+				errors <- err
+			}(helper)
 		}
 	}
+
+	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
+
+	suite.mainVault = nil
+	suite.replica1Vault = nil
+	suite.replica2Vault = nil
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
-	wg := sync.WaitGroup{}
+	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
+	errors := make(chan error, len(helpers))
 
-	for _, vaultHelper := range []*testutil.VaultHelper{
-		suite.mainVault,
-		suite.replica1Vault,
-		suite.replica2Vault,
-	} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for _, vaultHelper := range helpers {
+		go func(vaultHelper *testutil.VaultHelper) {
 			vaultHelper.Start(suite.ctx)
 			err := vaultHelper.QuickReset(suite.ctx, mounts...)
-			suite.NoError(err, "Failed to reset vault helper")
-		}()
+			errors <- err
+		}(vaultHelper)
 	}
-	wg.Wait()
+
+	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
+}
+
+func (suite *MultiClusterVaultClientTestSuite) handleTestSetUpTearDownErrors(errors chan error, expectedCount int) {
+	for i := 0; i < expectedCount; i++ {
+		select {
+		case err := <-errors:
+			if err != nil {
+				suite.FailNow("Error during test setup/teardown", err.Error())
+			}
+		case <-time.After(10 * time.Second):
+			suite.FailNow("Timed out waiting for vault helpers to terminate")
+		}
+	}
 }
 
 func TestMultiClusterVaultClientSuite(t *testing.T) {
@@ -199,9 +219,9 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMounts() {
 
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
-			mclient, _ := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			client, _ := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 
-			mounts, error := mclient.GetSecretMounts(suite.ctx, tc.secretPaths)
+			mounts, error := client.GetSecretMounts(suite.ctx, tc.secretPaths)
 
 			if tc.expectError {
 				suite.ErrorContains(error, tc.errorMsg, "Expected error message to contain: %s", tc.errorMsg)
@@ -285,11 +305,11 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 			}
 
 			// Create client
-			mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
 			// Test the function
-			keys, err := mclient.GetKeysUnderMount(suite.ctx, tc.mount)
+			keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount)
 
 			if tc.expectError {
 				suite.Error(err, "Expected error for test case: %s", tc.name)
@@ -401,10 +421,10 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 				time.Sleep(10 * time.Millisecond)
 			}
 
-			mclient, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, suite.replicaConfig)
+			client, err := NewMultiClusterVaultClient(ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
-			metadata, err := mclient.GetSecretMetadata(ctx, tc.mount, tc.keyPath)
+			metadata, err := client.GetSecretMetadata(ctx, tc.mount, tc.keyPath)
 
 			if tc.expectError {
 				suite.Error(err, "Expected error for test case: %s", tc.name)
@@ -439,33 +459,35 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 	assertResult := func(assertionParams []*syncResultAssertion) {
 		for _, params := range assertionParams {
 			cluster := params.vaultHelper.Config.ClusterName
-			suite.NotNil(params.result, "Expected result to be non-nil for cluster %s", cluster)
+			result := params.result
+			fmt.Println("Assertion for Result for cluster:", cluster, "Status:", result.Status)
+			suite.NotNil(result, "Expected result to be non-nil for cluster %s", cluster)
 
 			data, version, _ := params.vaultHelper.ReadSecretData(suite.ctx, params.mount, params.keypath)
 
-			suite.Equal(cluster, params.result.DestinationCluster, "Expected destination cluster to match for cluster %s", cluster)
-			suite.Equal(params.mount, params.result.SecretBackend, "Expected secret backend to match for cluster %s", cluster)
-			suite.Equal(params.keypath, params.result.SecretPath, "Expected secret path to match for cluster %s", cluster)
-			suite.Equal(params.expectedStatus, params.result.Status, "Expected status to match for cluster %s", cluster)
+			suite.Equal(cluster, result.DestinationCluster)
+			suite.Equal(params.mount, result.SecretBackend)
+			suite.Equal(params.keypath, result.SecretPath)
+			suite.Equal(params.expectedStatus, result.Status)
 
-			if params.result.Status == models.StatusSuccess {
-				suite.Equal(params.expectedSecret, data, "Expected secret data to match for cluster %s", cluster)
-				suite.Equal(params.result.DestinationVersion, version, "Expected destination version to match for cluster %s", cluster)
-				suite.NotNil(params.result.LastSyncAttempt, "Expected LastSyncAttempt to be set for successful sync")
-				suite.Nil(params.result.ErrorMessage, "Expected no error message for successful sync")
+			if result.Status == models.StatusSuccess {
+				suite.Equal(params.expectedSecret, data)
+				suite.Equal(result.DestinationVersion, version)
+				suite.NotNil(result.LastSyncAttempt)
+				suite.Nil(result.ErrorMessage)
 			} else {
-				suite.NotNil(params.result.ErrorMessage, "Expected ErrorMessage to be set for failed sync")
-				suite.Nil(params.result.LastSyncSuccess, "Expected LastSyncSuccess to be nil for failed sync")
+				suite.NotNil(result.ErrorMessage)
+				suite.Nil(result.LastSyncSuccess)
 			}
 		}
 	}
 
 	suite.Run("successful sync to all replicas new secret", func() {
 		suite.mainVault.WriteSecret(suite.ctx, mount, keyPath, secret)
-		mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 		suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
-		results, err := mclient.SyncSecretToReplicas(suite.ctx, mount, keyPath)
+		results, err := client.SyncSecretToReplicas(suite.ctx, mount, keyPath)
 
 		suite.NoError(err, "Expected no error for successful sync")
 		suite.NotNil(results, "Expected results to be returned")
@@ -493,12 +515,12 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 
 	suite.Run("returns empty results if no replica is configured", func() {
 		suite.mainVault.WriteSecret(suite.ctx, mount, keyPath, secret)
-		mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, []*config.VaultClusterConfig{})
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, []*config.VaultClusterConfig{})
 		suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
 		twoSeconds := 2 * time.Second
 		suite.replica2Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 2 being unavailable
-		results, err := mclient.SyncSecretToReplicas(suite.ctx, mount, keyPath)
+		results, err := client.SyncSecretToReplicas(suite.ctx, mount, keyPath)
 
 		suite.NoError(err, "Expected no error for successful sync")
 		suite.NotNil(results, "Expected results to be returned")
@@ -507,13 +529,13 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 
 	suite.Run("returns failed results when all replica become unavailable", func() {
 		suite.mainVault.WriteSecret(suite.ctx, mount, keyPath, secret)
-		mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 		suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
 		twoSeconds := 2 * time.Second
 		suite.replica1Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 1 being unavailable
 		suite.replica2Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 2 being unavailable
-		results, err := mclient.SyncSecretToReplicas(suite.ctx, mount, keyPath)
+		results, err := client.SyncSecretToReplicas(suite.ctx, mount, keyPath)
 
 		suite.NoError(err, "Expected no error for successful sync")
 		suite.NotNil(results, "Expected results to be returned")
@@ -541,10 +563,10 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 
 	suite.Run("returns error", func() {
 		suite.Run("for empty mount", func() {
-			mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
-			results, err := mclient.SyncSecretToReplicas(suite.ctx, "", keyPath)
+			results, err := client.SyncSecretToReplicas(suite.ctx, "", keyPath)
 
 			suite.Error(err, "Expected error for empty mount")
 			suite.Nil(results, "Expected no results for empty mount")
@@ -552,10 +574,10 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		})
 
 		suite.Run("for empty key path", func() {
-			mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
-			results, err := mclient.SyncSecretToReplicas(suite.ctx, mount, "")
+			results, err := client.SyncSecretToReplicas(suite.ctx, mount, "")
 
 			suite.Error(err, "Expected error for empty key path")
 			suite.Nil(results, "Expected no results for empty key path")
@@ -563,10 +585,10 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		})
 
 		suite.Run("when it fails to read source secret", func() {
-			mclient, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err, "Failed to create MultiClusterVaultClient")
 
-			results, err := mclient.SyncSecretToReplicas(suite.ctx, "wrong-mount", keyPath)
+			results, err := client.SyncSecretToReplicas(suite.ctx, "wrong-mount", keyPath)
 
 			suite.Error(err, "Expected error for failed read")
 			suite.Nil(results, "Expected no results for failed read")
@@ -574,6 +596,201 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		})
 	})
 
+}
+
+func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
+	mount := "team-a"
+	keyPath := "app/database"
+	secret := map[string]string{
+		"host":     "main-db.example.com",
+		"username": "admin",
+		"password": "secret123",
+	}
+
+	type deleteResultAssertion struct {
+		vaultHelper    *testutil.VaultHelper
+		result         *models.SyncSecretDeletionResult
+		expectedStatus models.SyncStatus
+		mount          string
+		keypath        string
+	}
+
+	assertResult := func(assertionParams []*deleteResultAssertion) {
+		for _, params := range assertionParams {
+			cluster := params.vaultHelper.Config.ClusterName
+			result := params.result
+			fmt.Println("Assertion for Result for cluster:", cluster, "Status:", result.Status)
+			suite.NotNil(result, "Expected result to be non-nil for cluster %s", cluster)
+
+			_, _, err := params.vaultHelper.ReadSecretData(suite.ctx, params.mount, params.keypath)
+			suite.Equal(cluster, result.DestinationCluster)
+			suite.Equal(params.mount, result.SecretBackend)
+			suite.Equal(params.keypath, result.SecretPath)
+			suite.Equal(params.expectedStatus, result.Status)
+
+			if result.Status == models.StatusSuccess {
+				suite.Error(err)
+				suite.ErrorContains(err, "no secret found")
+				suite.Nil(result.ErrorMessage)
+			} else {
+				suite.NotNil(result.ErrorMessage)
+			}
+		}
+	}
+
+	suite.Run("successful deletion from all replicas", func() {
+		suite.replica1Vault.WriteSecret(suite.ctx, mount, keyPath, secret)
+		suite.replica2Vault.WriteSecret(suite.ctx, mount, keyPath, secret)
+
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
+
+		suite.NoError(err)
+		suite.Len(results, 2)
+
+		assertResult([]*deleteResultAssertion{
+			{
+				vaultHelper:    suite.replica1Vault,
+				result:         results[0],
+				expectedStatus: models.StatusSuccess,
+				mount:          mount,
+				keypath:        keyPath,
+			},
+			{
+				vaultHelper:    suite.replica2Vault,
+				result:         results[1],
+				expectedStatus: models.StatusSuccess,
+				mount:          mount,
+				keypath:        keyPath,
+			},
+		})
+	})
+
+	suite.Run("successful deletion of non-existent secret (no error)", func() {
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, "non/existent/secret")
+
+		suite.NoError(err)
+		suite.Len(results, 2)
+
+		assertResult([]*deleteResultAssertion{
+			{
+				vaultHelper:    suite.replica1Vault,
+				result:         results[0],
+				expectedStatus: models.StatusSuccess,
+				mount:          mount,
+				keypath:        "non/existent/secret",
+			},
+			{
+				vaultHelper:    suite.replica2Vault,
+				result:         results[1],
+				expectedStatus: models.StatusSuccess,
+				mount:          mount,
+				keypath:        "non/existent/secret",
+			},
+		})
+	})
+
+	suite.Run("returns empty results if no replica is configured", func() {
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, []*config.VaultClusterConfig{})
+		suite.NoError(err)
+
+		results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
+
+		suite.NoError(err)
+		suite.Len(results, 0)
+	})
+
+	suite.Run("returns failed results when all replicas become unavailable", func() {
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		twoSeconds := 2 * time.Second
+		suite.replica1Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 1 being unavailable
+		suite.replica2Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 2 being unavailable
+
+		results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
+
+		suite.NoError(err)
+		suite.Len(results, 2)
+
+		assertResult([]*deleteResultAssertion{
+			{
+				vaultHelper:    suite.replica1Vault,
+				result:         results[0],
+				expectedStatus: models.StatusFailed,
+				mount:          mount,
+				keypath:        keyPath,
+			},
+			{
+				vaultHelper:    suite.replica2Vault,
+				result:         results[1],
+				expectedStatus: models.StatusFailed,
+				mount:          mount,
+				keypath:        keyPath,
+			},
+		})
+	})
+
+	suite.Run("returns error", func() {
+		suite.Run("for empty mount", func() {
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			results, err := client.DeleteSecretFromReplicas(suite.ctx, "", keyPath)
+
+			suite.Nil(results)
+			suite.Error(err)
+			suite.ErrorContains(err, "mount cannot be empty")
+		})
+
+		suite.Run("for empty key path", func() {
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, "")
+
+			suite.Nil(results)
+			suite.Error(err)
+			suite.ErrorContains(err, "key path cannot be empty")
+		})
+
+		suite.Run("partial failure when one replica is unavailable", func() {
+			suite.replica1Vault.WriteSecret(suite.ctx, mount, keyPath, secret)
+			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+			suite.NoError(err)
+
+			twoSeconds := 2 * time.Second
+			suite.replica2Vault.Stop(suite.ctx, &twoSeconds)
+
+			results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
+
+			suite.NoError(err)
+			suite.Len(results, 2)
+
+			assertResult([]*deleteResultAssertion{
+				{
+					vaultHelper:    suite.replica1Vault,
+					result:         results[0],
+					expectedStatus: models.StatusSuccess,
+					mount:          mount,
+					keypath:        keyPath,
+				},
+				{
+					vaultHelper:    suite.replica2Vault,
+					result:         results[1],
+					expectedStatus: models.StatusFailed,
+					mount:          mount,
+					keypath:        keyPath,
+				},
+			})
+
+		})
+	})
 }
 
 func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestSuite() (*config.VaultClusterConfig, []*config.VaultClusterConfig) {

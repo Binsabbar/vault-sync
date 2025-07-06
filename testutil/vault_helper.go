@@ -220,8 +220,8 @@ func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approl
 		}
 		for _, mount := range mounts {
 			policyPaths = append(policyPaths,
-				fmt.Sprintf(`path "%s/data/*" { capabilities = ["create", "update", "read", "list"]  }`, mount),
-				fmt.Sprintf(`path "%s/metadata/*" { capabilities = ["create", "update", "read", "list"]  }`, mount),
+				fmt.Sprintf(`path "%s/data/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`, mount),
+				fmt.Sprintf(`path "%s/metadata/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`, mount),
 			)
 		}
 		policy := strings.Join(policyPaths, "\n")
@@ -255,9 +255,10 @@ func (v *VaultHelper) ReadSecretData(ctx context.Context, mount, path string) (m
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to read secret data: %w", err)
 	}
+
 	secrets, version, err := extractSecretDataFromResponse(output)
 	if err != nil {
-		return nil, -1, fmt.Errorf("failed to parse secret data: %w", err)
+		return nil, -1, err
 	}
 
 	return secrets, version, nil
@@ -343,6 +344,9 @@ func (v *VaultHelper) getAppRoleIDAndSecret(ctx context.Context, approle string)
 
 func extractSecretDataFromResponse(jsonStr string) (secretData map[string]string, version int64, err error) {
 	var response map[string]any
+	if strings.HasPrefix(jsonStr, "No value found at") {
+		return nil, 0, fmt.Errorf("no secret found")
+	}
 	if err := json.Unmarshal([]byte(jsonStr), &response); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse JSON: %w", err)
 	}
