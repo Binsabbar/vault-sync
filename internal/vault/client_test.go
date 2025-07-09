@@ -731,7 +731,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 			suite.Equal(params.keypath, result.SecretPath)
 			suite.Equal(params.expectedStatus, result.Status)
 
-			if result.Status == models.StatusSuccess {
+			if result.Status == models.StatusDeleted {
 				suite.Error(err)
 				suite.ErrorContains(err, "no secret found")
 				suite.Nil(result.ErrorMessage)
@@ -757,14 +757,14 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 			{
 				vaultHelper:    suite.replica1Vault,
 				result:         results[0],
-				expectedStatus: models.StatusSuccess,
+				expectedStatus: models.StatusDeleted,
 				mount:          mount,
 				keypath:        keyPath,
 			},
 			{
 				vaultHelper:    suite.replica2Vault,
 				result:         results[1],
-				expectedStatus: models.StatusSuccess,
+				expectedStatus: models.StatusDeleted,
 				mount:          mount,
 				keypath:        keyPath,
 			},
@@ -784,14 +784,14 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 			{
 				vaultHelper:    suite.replica1Vault,
 				result:         results[0],
-				expectedStatus: models.StatusSuccess,
+				expectedStatus: models.StatusDeleted,
 				mount:          mount,
 				keypath:        "non/existent/secret",
 			},
 			{
 				vaultHelper:    suite.replica2Vault,
 				result:         results[1],
-				expectedStatus: models.StatusSuccess,
+				expectedStatus: models.StatusDeleted,
 				mount:          mount,
 				keypath:        "non/existent/secret",
 			},
@@ -879,7 +879,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 				{
 					vaultHelper:    suite.replica1Vault,
 					result:         results[0],
-					expectedStatus: models.StatusSuccess,
+					expectedStatus: models.StatusDeleted,
 					mount:          mount,
 					keypath:        keyPath,
 				},

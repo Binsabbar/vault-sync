@@ -15,6 +15,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
+const (
+	fiveMinutes = 5 * time.Minute
+)
+
 type clusterManager struct {
 	client *vault.Client
 	config *config.VaultClusterConfig
@@ -59,7 +63,7 @@ func newClusterManager(cfg *config.VaultClusterConfig) (*clusterManager, error) 
 // authenticate authenticates the cluster manager with Vault using AppRole
 // It sets the client token on success.
 func (cm *clusterManager) authenticate(ctx context.Context) error {
-	logger := cm.logger.With().Str("event", "authenticate").Logger()
+	logger := cm.logger.With().Str("action", "authenticate").Logger()
 
 	logger.Info().Msg("Authenticating with Vault")
 	res, err := cm.client.Auth.AppRoleLogin(
@@ -81,14 +85,10 @@ func (cm *clusterManager) authenticate(ctx context.Context) error {
 	return nil
 }
 
-const (
-	fiveMinutes = 5 * time.Minute
-)
-
 // ensureValidToken checks if the Vault token is valid and has sufficient TTL.
 // If the token is invalid or has low TTL, it re-authenticates.
 func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
-	logger := cm.logger.With().Str("event", "ensure_valid_token").Logger()
+	logger := cm.logger.With().Str("action", "ensure_valid_token").Logger()
 	reauthenticate := func(msg string, ttlSeconds int64, err error) error {
 		logger.Warn().Int64("ttl_seconds", ttlSeconds).Err(err).Msg(msg)
 		return cm.authenticate(ctx)
@@ -123,7 +123,7 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 // It returns a slice of missing mounts if any are not found.
 func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, mounts []string) ([]string, error) {
 	logger := cm.logger.With().
-		Str("event", "check_mounts").
+		Str("action", "check_mounts").
 		Strs("mounts", mounts).
 		Logger()
 
@@ -158,7 +158,7 @@ func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, m
 // It returns a map where keys are mount paths and values are true.
 // The mount paths are cleaned to remove trailing slashes.
 func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[string]bool, error) {
-	logger := cm.logger.With().Str("event", "retrieve_secret_engine_mounts").Logger()
+	logger := cm.logger.With().Str("action", "retrieve_secret_engine_mounts").Logger()
 	resp, err := cm.client.System.MountsListSecretsEngines(ctx)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to list secret engines")
@@ -178,7 +178,7 @@ func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[s
 // fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
 func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error) {
 	logger := cm.logger.With().
-		Str("event", "fetch_keys_under_mount").
+		Str("action", "fetch_keys_under_mount").
 		Str("mount", mount).
 		Logger()
 
@@ -251,7 +251,7 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 // fetchSecretMetadata retrieves metadata for a secret at the given mount and key path
 func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error) {
 	logger := cm.logger.With().
-		Str("event", "fetch_secret_metadata").
+		Str("action", "fetch_secret_metadata").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()
@@ -286,7 +286,7 @@ func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPat
 // secretExists checks if a secret exists at the given mount and key path
 func (cm *clusterManager) secretExists(ctx context.Context, mount, keyPath string) (bool, error) {
 	logger := cm.logger.With().
-		Str("event", "secret_exists").
+		Str("action", "secret_exists").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()
@@ -314,7 +314,7 @@ func (cm *clusterManager) secretExists(ctx context.Context, mount, keyPath strin
 
 // readSecret reads secret data from the cluster
 func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string) (*VaultSecretResponse, error) {
-	logger := cm.logger.With().Str("event", "read_secret").
+	logger := cm.logger.With().Str("action", "read_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()
@@ -343,7 +343,7 @@ func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string)
 
 // writeSecret writes secret data to the cluster and returns the new version
 func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string, data map[string]interface{}) (int64, error) {
-	logger := cm.logger.With().Str("event", "read_secret").
+	logger := cm.logger.With().Str("action", "read_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()
@@ -368,7 +368,7 @@ func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string
 // deleteSecret deletes a secret from the cluster
 func (cm *clusterManager) deleteSecret(ctx context.Context, mount, keyPath string) error {
 	logger := cm.logger.With().
-		Str("event", "delete_secret").
+		Str("action", "delete_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()
