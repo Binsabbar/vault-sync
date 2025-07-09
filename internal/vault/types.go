@@ -5,10 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-	"vault-sync/internal/models"
-
-	"github.com/hashicorp/vault-client-go"
-	"github.com/hashicorp/vault-client-go/schema"
 )
 
 const (
@@ -55,34 +51,6 @@ type VaultSecretMetadataResponse struct {
 	CreatedTime    time.Time                             `json:"created_time"`
 	UpdatedTime    time.Time                             `json:"updated_time"`
 	Versions       map[string]VaultSecretEmbededMetadata `json:"versions"`
-}
-
-func parseVaultSecretResponse(data *vault.Response[schema.KvV2ReadResponse]) (*VaultSecretResponse, error) {
-	jsonData, err := json.Marshal(data.Data)
-	if err != nil {
-		return nil, err
-	}
-
-	var vaultResponse VaultSecretResponse
-	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretResponse: %w", err)
-	}
-
-	return &vaultResponse, nil
-}
-
-func parseVaultSecretMetadataResponse(data *vault.Response[schema.KvV2ReadMetadataResponse]) (*VaultSecretMetadataResponse, error) {
-	jsonData, err := json.Marshal(data.Data)
-	if err != nil {
-		return nil, err
-	}
-
-	var vaultResponse VaultSecretMetadataResponse
-	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretMetadataResponse: %w", err)
-	}
-
-	return &vaultResponse, nil
 }
 
 // ***********
@@ -163,15 +131,7 @@ func (rc *syncResultAggregator[T]) aggregate(ctx context.Context) ([]T, error) {
 
 // ************
 //
-// replicaSyncOperationResult is an interface that defines the methods required for a result
-// of a replica synchronization operation.
+// syncOperationFunc is a function type that defines the signature for synchronization operations.
 //
 // ************
-type replicaSyncOperationResult interface {
-	*models.SyncedSecret | *models.SyncSecretDeletionResult
-	SetStatus(status models.SyncStatus)
-	SetErrorMessage(msg *string)
-	SetLastSuccessAttempt(t *time.Time)
-	GetStatus() models.SyncStatus
-	GetDestinationCluster() string
-}
+type syncOperationFunc[T replicaSyncOperationResult] func(ctx context.Context, mount, keyPath, clusterName string, result T) error
