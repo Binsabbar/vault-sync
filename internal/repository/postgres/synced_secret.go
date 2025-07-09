@@ -18,13 +18,6 @@ import (
 	"github.com/sony/gobreaker"
 )
 
-var (
-	ErrSecretNotFound         = errors.New("synced secret not found")
-	ErrDatabaseUnavailable    = errors.New("database is unavailable")
-	ErrDatabaseGeneric        = errors.New("database error occurred while processing request")
-	ErrInvalidQueryParameters = errors.New("invalid query parameters provided for synced secret operation")
-)
-
 type PostgreSQLSyncedSecretRepository struct {
 	psql           *postgres.PostgresDatastore
 	circuitBreaker *gobreaker.CircuitBreaker
