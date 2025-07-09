@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"vault-sync/internal/models"
+	"vault-sync/internal/repository"
 	postgres "vault-sync/pkg/db"
 	"vault-sync/pkg/log"
 
@@ -79,8 +80,8 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		err := repo.psql.DB.Get(secret, query, backend, path, destinationCluster)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				logger.Debug().Msg(ErrSecretNotFound.Error())
-				return nil, ErrSecretNotFound
+				logger.Debug().Msg(repository.ErrSecretNotFound.Error())
+				return nil, repository.ErrSecretNotFound
 			}
 			logger.Error().Err(err).Msg("error occurred while getting synced secret")
 			return nil, fmt.Errorf("error occurred while getting synced secret: %w", err)
@@ -229,7 +230,7 @@ func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSync
 		if nullableResult {
 			return opsResult, nil
 		}
-		return opsResult, ErrSecretNotFound
+		return opsResult, repository.ErrSecretNotFound
 	}
 
 	typedResult, ok := result.(T)
@@ -247,12 +248,12 @@ func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err erro
 
 	switch {
 	case errors.Is(err, gobreaker.ErrOpenState), errors.Is(err, gobreaker.ErrTooManyRequests):
-		return fmt.Errorf("%w: circuit breaker is open", ErrDatabaseUnavailable)
+		return fmt.Errorf("%w: circuit breaker is open", repository.ErrDatabaseUnavailable)
 	default:
 		if err.Error() == "backoff: retry limit exceeded" {
-			return fmt.Errorf("%w: retry limit exceeded", ErrDatabaseUnavailable)
+			return fmt.Errorf("%w: retry limit exceeded", repository.ErrDatabaseUnavailable)
 		}
-		return fmt.Errorf("%w: %w", ErrDatabaseGeneric, err)
+		return fmt.Errorf("%w: %w", repository.ErrDatabaseGeneric, err)
 	}
 }
 
@@ -286,7 +287,7 @@ func (repo *PostgreSQLSyncedSecretRepository) createOperationLogger(event, backe
 
 func validateQueryParameters(backend, path, destinationCluster string) error {
 	if backend == "" || path == "" || destinationCluster == "" {
-		return ErrInvalidQueryParameters
+		return repository.ErrInvalidQueryParameters
 	}
 	return nil
 }

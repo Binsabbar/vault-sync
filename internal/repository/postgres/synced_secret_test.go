@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"vault-sync/internal/models"
+	"vault-sync/internal/repository"
 	"vault-sync/pkg/db"
 	"vault-sync/pkg/db/migrations"
 	"vault-sync/testutil"
@@ -104,7 +105,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			backend:            "kv",
 			path:               "does/not/exist",
 			destinationCluster: "prod",
-			expectedErr:        ErrSecretNotFound,
+			expectedErr:        repository.ErrSecretNotFound,
 			expectedSecret:     nil,
 		},
 		{
@@ -113,7 +114,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			backend:            "",
 			path:               "does/not/exist",
 			destinationCluster: "prod",
-			expectedErr:        ErrInvalidQueryParameters,
+			expectedErr:        repository.ErrInvalidQueryParameters,
 			expectedSecret:     nil,
 		},
 		{
@@ -122,7 +123,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			backend:            "kv",
 			path:               "",
 			destinationCluster: "prod",
-			expectedErr:        ErrInvalidQueryParameters,
+			expectedErr:        repository.ErrInvalidQueryParameters,
 			expectedSecret:     nil,
 		},
 		{
@@ -131,7 +132,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			backend:            "kv",
 			path:               "does/not/exist",
 			destinationCluster: "",
-			expectedErr:        ErrInvalidQueryParameters,
+			expectedErr:        repository.ErrInvalidQueryParameters,
 			expectedSecret:     nil,
 		},
 	}
@@ -404,7 +405,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestDeleteSyncedSecret() {
 			backend:             "",
 			path:                "test/path",
 			destinationCluster:  "prod",
-			expectedErr:         ErrInvalidQueryParameters,
+			expectedErr:         repository.ErrInvalidQueryParameters,
 			shouldVerifyDeleted: false,
 		},
 		{
@@ -413,7 +414,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestDeleteSyncedSecret() {
 			backend:             "kv",
 			path:                "",
 			destinationCluster:  "prod",
-			expectedErr:         ErrInvalidQueryParameters,
+			expectedErr:         repository.ErrInvalidQueryParameters,
 			shouldVerifyDeleted: false,
 		},
 		{
@@ -422,7 +423,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestDeleteSyncedSecret() {
 			backend:             "kv",
 			path:                "test/path",
 			destinationCluster:  "",
-			expectedErr:         ErrInvalidQueryParameters,
+			expectedErr:         repository.ErrInvalidQueryParameters,
 			shouldVerifyDeleted: false,
 		},
 	}
@@ -555,9 +556,9 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 				_, circuitError := test.functionToExecute(repo)
 
 				// check that the errors are as expected
-				suite.ErrorIs(retryError1, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-				suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-				suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+				suite.ErrorIs(retryError1, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+				suite.ErrorIs(retryError2, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+				suite.ErrorIs(circuitError, repository.ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 			})
 		}
 	})
@@ -580,9 +581,9 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 				_, retryError2 := test.functionToExecute(repo)
 				_, circuitError := test.functionToExecute(repo)
 
-				suite.ErrorIs(retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-				suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-				suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+				suite.ErrorIs(retryError, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+				suite.ErrorIs(retryError2, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+				suite.ErrorIs(circuitError, repository.ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 
 				suite.pgHelper.Start(context.Background())
 
@@ -608,17 +609,17 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 
 		_, retryError := repo.GetSyncedSecret("kv", "test", "prod")
 		_, retryError2 := repo.GetSyncedSecret("kv", "test", "prod")
-		suite.ErrorIs(retryError, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
-		suite.ErrorIs(retryError2, ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
+		suite.ErrorIs(retryError2, repository.ErrDatabaseGeneric, "Expected ErrDatabaseGeneric error")
 
 		_, circuitError := repo.GetSyncedSecrets()
-		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(circuitError, repository.ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 
 		circuitError = repo.UpdateSyncedSecretStatus(secret)
-		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(circuitError, repository.ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 
 		circuitError = repo.DeleteSyncedSecret("kv", "test", "prod")
-		suite.ErrorIs(circuitError, ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
+		suite.ErrorIs(circuitError, repository.ErrDatabaseUnavailable, "Expected ErrDatabaseUnavailable error")
 	})
 }
 
