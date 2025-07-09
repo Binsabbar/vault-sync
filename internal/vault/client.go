@@ -54,7 +54,7 @@ func NewMultiClusterVaultClient(ctx context.Context, mainConfig *config.VaultClu
 // It checks if the mounts exist in all clusters (main and replicas).
 func (mc *MultiClusterVaultClient) GetSecretMounts(ctx context.Context, secretPaths []string) ([]string, error) {
 	logger := mc.logger.With().
-		Str("event", "get_secret_mounts").
+		Str("action", "get_secret_mounts").
 		Strs("secret_paths", secretPaths).
 		Logger()
 
@@ -178,7 +178,7 @@ func (mc *MultiClusterVaultClient) SyncSecretToReplicas(ctx context.Context, mou
 		ctx:           ctx,
 		logger:        &logger,
 		sourceVersion: sourceSecret.Metadata.Version,
-		clusters:      mc.getReplicaNames(),
+		clusters:      mc.GetReplicaNames(),
 		mount:         mount,
 		keyPath:       keyPath,
 		operationFunc: mc.syncSecretFuncFactory(sourceSecret.Data),
@@ -208,7 +208,7 @@ func (mc *MultiClusterVaultClient) DeleteSecretFromReplicas(ctx context.Context,
 		ctx:           ctx,
 		logger:        &logger,
 		sourceVersion: 0,
-		clusters:      mc.getReplicaNames(),
+		clusters:      mc.GetReplicaNames(),
 		mount:         mount,
 		keyPath:       keyPath,
 		operationFunc: mc.deleteSecretFuncFactory(),
@@ -220,6 +220,14 @@ func (mc *MultiClusterVaultClient) DeleteSecretFromReplicas(ctx context.Context,
 	}
 
 	return results, nil
+}
+
+func (mc *MultiClusterVaultClient) GetReplicaNames() []string {
+	names := make([]string, 0, len(mc.replicaClusters))
+	for name := range mc.replicaClusters {
+		names = append(names, name)
+	}
+	return names
 }
 
 // readSecretFromMainCluster reads both secret data and metadata from the main cluster
@@ -249,13 +257,13 @@ func (mc *MultiClusterVaultClient) syncSecretFuncFactory(secretData map[string]i
 func (mc *MultiClusterVaultClient) deleteSecretFuncFactory() syncOperationFunc[*models.SyncSecretDeletionResult] {
 	return func(ctx context.Context, mount, keyPath, clusterName string, result *models.SyncSecretDeletionResult) error {
 		err := mc.replicaClusters[clusterName].deleteSecret(ctx, mount, keyPath)
-		result.Status = models.StatusSuccess
+		result.Status = models.StatusDeleted
 		return err
 	}
 }
 
 func (mc *MultiClusterVaultClient) createOperationLogger(operation, mount, keyPath string) zerolog.Logger {
-	logger := mc.logger.With().Str("operation", operation)
+	logger := mc.logger.With().Str("action", operation)
 	if mount != "" {
 		logger = logger.Str("mount", mount)
 	}
@@ -263,12 +271,4 @@ func (mc *MultiClusterVaultClient) createOperationLogger(operation, mount, keyPa
 		logger = logger.Str("key_path", keyPath)
 	}
 	return logger.Logger()
-}
-
-func (mc *MultiClusterVaultClient) getReplicaNames() []string {
-	names := make([]string, 0, len(mc.replicaClusters))
-	for name := range mc.replicaClusters {
-		names = append(names, name)
-	}
-	return names
 }

@@ -1,11 +1,14 @@
 package vault
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"vault-sync/internal/models"
 	"vault-sync/pkg/converter"
 
+	"github.com/hashicorp/vault-client-go"
+	"github.com/hashicorp/vault-client-go/schema"
 	"github.com/rs/zerolog"
 )
 
@@ -84,7 +87,30 @@ func logOperationSummary[T replicaSyncOperationResult](logger *zerolog.Logger, r
 		Msg("Secret synchronization operation summary")
 }
 
-// Helper function to create string pointer
-func stringPtr(s string) *string {
-	return &s
+func parseVaultSecretResponse(data *vault.Response[schema.KvV2ReadResponse]) (*VaultSecretResponse, error) {
+	jsonData, err := json.Marshal(data.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var vaultResponse VaultSecretResponse
+	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretResponse: %w", err)
+	}
+
+	return &vaultResponse, nil
+}
+
+func parseVaultSecretMetadataResponse(data *vault.Response[schema.KvV2ReadMetadataResponse]) (*VaultSecretMetadataResponse, error) {
+	jsonData, err := json.Marshal(data.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var vaultResponse VaultSecretMetadataResponse
+	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretMetadataResponse: %w", err)
+	}
+
+	return &vaultResponse, nil
 }
