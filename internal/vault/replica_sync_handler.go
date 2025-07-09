@@ -17,8 +17,6 @@ const (
 	operationTypeDelete operationType = "delete"
 )
 
-type syncOperationFunc[T replicaSyncOperationResult] func(ctx context.Context, mount, keyPath, clusterName string, result T) error
-
 type replicaSyncHandler[T replicaSyncOperationResult] struct {
 	operationType operationType
 	ctx           context.Context
