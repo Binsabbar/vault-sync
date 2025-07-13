@@ -7,20 +7,18 @@ import (
 	"testing"
 	"vault-sync/internal/models"
 	"vault-sync/internal/repository"
-	"vault-sync/internal/vault"
+	"vault-sync/internal/service/job/testbuilder"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
 type SyncJobTestSuite struct {
 	suite.Suite
-	ctx       context.Context
-	mount     string
-	keyPath   string
-	mockVault *mockVaultClient
-	mockRepo  *mockRepository
-	worker    *SyncJob
+	ctx     context.Context
+	mount   string
+	keyPath string
+	worker  *SyncJob
+	builder testbuilder.MockClustersStage
 }
 
 func (suite *SyncJobTestSuite) SetupTest() {
@@ -30,15 +28,15 @@ func (suite *SyncJobTestSuite) SetupTest() {
 }
 
 func (suite *SyncJobTestSuite) SetupSubTest() {
-	suite.mockVault = new(mockVaultClient)
-	suite.mockRepo = new(mockRepository)
-	suite.mockVault.On("GetReplicaNames").Return([]string{"cluster1", "cluster2"})
+	suite.builder = testbuilder.NewSyncJobMockBuilder().WithKeyPath(suite.keyPath).WithMount(suite.mount).WithClusters(clusters...)
 }
 
-func (suite *SyncJobTestSuite) TearDownSubTest() {
-	// suite.mockVault.AssertExpectations(suite.T())
-	// suite.mockRepo.AssertExpectations(suite.T())
-}
+const (
+	cluster1 = "cluster1"
+	cluster2 = "cluster2"
+)
+
+var clusters = []string{cluster1, cluster2}
 
 func TestSyncJobTest(t *testing.T) {
 	if os.Getenv("SKIP_INTEGRATION_TESTS") == "true" {
@@ -51,358 +49,330 @@ func TestSyncJobTest(t *testing.T) {
 
 func (suite *SyncJobTestSuite) TestExecute_Success() {
 	secretVersion := int64(1)
-	sourceVersion := int64(1)
+	sourceVersion := int64(2)
 
 	suite.Run("syncs secret to replicas if secret does not exist in DB for all clusters", func() {
-		builder := NewSyncJobMockBuilder().
-			WithClusters("cluster1", "cluster2").
-			WithMount(suite.mount).
-			WithKeyPath(suite.keyPath).
-			WithSecretVersion(secretVersion).
-			WithNotFoundGetSyncedSecret("cluster1", "cluster2").
-			WithUpdateSyncedSecretStatusResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2").
-			WithSyncSecretToReplicasResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2")
+		mockRepo, mockVault := suite.builder.
+			WithGetSyncedSecretNotFound(clusters...).
+			WithUpdateSyncedSecretStatus(models.StatusSuccess, sourceVersion, clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(true).
+			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		mockRepo, mockVault := builder.Build()
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusUpdated)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 
 	suite.Run("syncs secret to replicas if secret does not exist in DB for at least one cluster", func() {
-		builder := NewSyncJobMockBuilder().
-			WithClusters("cluster1", "cluster2").
-			WithMount(suite.mount).
-			WithKeyPath(suite.keyPath).
-			WithSecretVersion(secretVersion).
-			WithGetSyncedSecretResult("cluster1").
-			WithNotFoundGetSyncedSecret("cluster2").
-			WithUpdateSyncedSecretStatusResult(models.StatusSuccess, secretVersion, "cluster1", "cluster2").
-			WithSyncSecretToReplicasResult(models.StatusSuccess, secretVersion, "cluster1", "cluster2")
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(secretVersion).
+			WithGetSyncedSecret(cluster1).
+			WithGetSyncedSecretNotFound(cluster2).
+			WithUpdateSyncedSecretStatus(models.StatusSuccess, sourceVersion, clusters...).
+			SwitchToVaultStage().
+			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		mockRepo, mockVault := builder.Build()
-
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusUpdated)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 
 	suite.Run("syncs secret to replicas if it exists in DB but is not up to date with source cluster", func() {
-		sourceVersion := secretVersion + 1
-		builder := NewSyncJobMockBuilder().
-			WithMount(suite.mount).
-			WithKeyPath(suite.keyPath).
-			WithClusters("cluster1", "cluster2").
-			WithSecretVersion(secretVersion).
-			WithGetSyncedSecretResult("cluster1", "cluster2").
-			WithSourceSecretVersion(sourceVersion).
-			WithSecretExists(true).
-			WithUpdateSyncedSecretStatusResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2").
-			WithSyncSecretToReplicasResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2")
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(secretVersion).
+			WithGetSyncedSecret(clusters...).
+			WithUpdateSyncedSecretStatus(models.StatusSuccess, sourceVersion, clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(true).
+			WithGetSecretMetadata(sourceVersion).
+			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		mockRepo, mockVault := builder.Build()
-
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusUpdated)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 
 	suite.Run("syncs secret to replicas if it exists in DB but SOME are not up to date with source cluster", func() {
-		sourceVersion := secretVersion + 1
-		builder := NewSyncJobMockBuilder().
-			WithClusters("cluster1", "cluster2").
-			WithMount(suite.mount).
-			WithKeyPath(suite.keyPath).
-			WithSecretVersion(secretVersion).
-			WithGetSyncedSecretResult("cluster1").
-			WithSecretVersion(sourceVersion).
-			WithGetSyncedSecretResult("cluster2").
-			WithSourceSecretVersion(sourceVersion).
-			WithSecretExists(true).
-			WithUpdateSyncedSecretStatusResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2").
-			WithSyncSecretToReplicasResult(models.StatusSuccess, sourceVersion, "cluster1", "cluster2")
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(secretVersion).
+			WithGetSyncedSecret(cluster1).
+			WithDatabaseSecretVersion(sourceVersion).
+			WithGetSyncedSecret(cluster2).
+			WithUpdateSyncedSecretStatus(models.StatusSuccess, sourceVersion, clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(true).
+			WithGetSecretMetadata(sourceVersion).
+			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		mockRepo, mockVault := builder.Build()
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusUpdated)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 
 	suite.Run("does not sync a secret if it exists in DB for all clusters and is up to date with source cluster", func() {
-		suite.stubDbGetSyncedSecret(suite.newSyncSecret("cluster1", sourceVersion, models.StatusSuccess), nil, "cluster1", "cluster2")
-		suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(true, nil)
-		suite.mockVault.
-			On("GetSecretMetadata", mock.Anything, suite.mount, suite.keyPath).
-			Return(&vault.VaultSecretMetadataResponse{CurrentVersion: sourceVersion}, nil)
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(sourceVersion).
+			WithGetSyncedSecret(clusters...).
+			WithUpdateSyncedSecretStatus(models.StatusSuccess, sourceVersion, clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(true).
+			WithGetSecretMetadata(sourceVersion).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusUnModified)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 
 	suite.Run("deletes secret from all replicas if it is in DB but not in source cluster", func() {
-		suite.stubDbGetSyncedSecret(suite.newSyncSecret("cluster1", sourceVersion, models.StatusSuccess), nil, "cluster1", "cluster2")
-		suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster1").Return(nil)
-		suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster2").Return(nil)
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(sourceVersion).
+			WithGetSyncedSecret(clusters...).
+			WithDeleteSyncedSecret(clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(false).
+			WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-		suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(false, nil)
-		suite.mockVault.On("DeleteSecretFromReplicas", mock.Anything, suite.mount, suite.keyPath).Return([]*models.SyncSecretDeletionResult{
-			suite.newSyncSecretDeletionResult("cluster1", sourceVersion, models.StatusDeleted),
-			suite.newSyncSecretDeletionResult("cluster2", sourceVersion, models.StatusDeleted),
-		}, nil)
-
-		suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
-
-		jobResult, err := suite.worker.Execute(suite.ctx)
+		jobResult, err := worker.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(jobResult.Status, 2)
 		for _, status := range jobResult.Status {
 			suite.Equal(status.Status, SyncJobStatusDeleted)
-			suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+			suite.Contains(clusters, status.ClusterName)
+		}
+	})
+
+	suite.Run("returns partial success if delete fails for some replicas", func() {
+		mockRepo, mockVault := suite.builder.
+			WithDatabaseSecretVersion(sourceVersion).
+			WithGetSyncedSecret(clusters...).
+			WithDeleteSyncedSecret(clusters...).
+			SwitchToVaultStage().
+			WithVaultSecretExists(false).
+			WithDeleteSecretFromReplicas(models.StatusDeleted, cluster1).
+			WithDeleteSecretFromReplicas(models.StatusFailed, cluster2).
+			Build()
+		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
+
+		jobResult, err := worker.Execute(suite.ctx)
+
+		suite.NoError(err)
+		suite.Len(jobResult.Status, 2)
+		for _, status := range jobResult.Status {
+			if status.ClusterName == cluster1 {
+				suite.Equal(status.Status, SyncJobStatusDeleted)
+			} else {
+				suite.Equal(status.Status, SyncJobStatusErrorDeleting)
+			}
+			suite.Contains(clusters, status.ClusterName)
 		}
 	})
 }
 
 func (suite *SyncJobTestSuite) TestExecute_Failure() {
 	// sourceVersion := int64(1)
-	suite.Run("report error when database returns error", func() {
-		suite.Run("return error on getting synced secret", func() {
-			suite.mockRepo.On("GetSyncedSecret", suite.mount, suite.keyPath, "cluster1").Return(nil, repository.ErrDatabaseGeneric)
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
-			_, err := suite.worker.Execute(suite.ctx)
+	suite.Run("repository client failures", func() {
+		suite.Run("return error on getting synced secret when DB raises error for single cluster", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).
+				WithGetSyncedSecret(cluster1).
+				WithGetSyncedSecretError(repository.ErrDatabaseGeneric, cluster2).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
+
+			_, err := worker.Execute(suite.ctx)
+
 			suite.Error(err)
 			suite.Equal(repository.ErrDatabaseGeneric, err)
 		})
 
-		suite.Run("return failed result on updating synced secret on single cluster fails", func() {
-			clusterOneSecret := suite.newSyncSecret("cluster1", 2, models.StatusSuccess)
-			clusterTwoSecret := suite.newSyncSecret("cluster2", 2, models.StatusSuccess)
-			suite.stubDbGetSyncedSecret(nil, repository.ErrSecretNotFound, "cluster1")
-			suite.mockRepo.On("UpdateSyncedSecretStatus", clusterOneSecret).Return(repository.ErrDatabaseGeneric)
-			suite.mockRepo.On("UpdateSyncedSecretStatus", clusterTwoSecret).Return(nil)
+		suite.Run("return error on getting synced secret when DB raises error for all clusters", func() {
+			mockRepo, mockVault := suite.builder.WithGetSyncedSecretError(repository.ErrDatabaseGeneric, clusters...).Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.mockVault.
-				On("SyncSecretToReplicas", mock.Anything, suite.mount, suite.keyPath).
-				Return([]*models.SyncedSecret{clusterOneSecret, clusterTwoSecret}, nil)
+			_, err := worker.Execute(suite.ctx)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			suite.Error(err)
+			suite.Equal(repository.ErrDatabaseGeneric, err)
+		})
 
-			result, _ := suite.worker.Execute(suite.ctx)
+		suite.Run("return failed result on updating synced secret when error is raised for single cluster", func() {
+			mockRepo, mockVault := suite.builder.
+				WithGetSyncedSecretNotFound(clusters...).
+				WithUpdateSyncedSecretStatusError(repository.ErrDatabaseGeneric, cluster1).
+				WithUpdateSyncedSecretStatus(models.StatusSuccess, 2, cluster2).
+				SwitchToVaultStage().
+				WithSyncSecretToReplicas(models.StatusSuccess, 2, clusters...).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
+
+			result, _ := worker.Execute(suite.ctx)
 
 			resultStatus := result.Status
 			suite.Len(resultStatus, 2)
 			for _, status := range resultStatus {
-				if status.ClusterName == "cluster1" {
+				if status.ClusterName == cluster1 {
 					suite.Equal(status.Status, SyncJobStatusFailed)
 				} else {
 					suite.Equal(status.Status, SyncJobStatusUpdated)
 				}
-				suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+				suite.Contains(clusters, status.ClusterName)
 			}
 		})
 
-		suite.Run("return failed result on updating synced secret when all cluster fails", func() {
-			clusterOneSecret := suite.newSyncSecret("cluster1", 2, models.StatusSuccess)
-			clusterTwoSecret := suite.newSyncSecret("cluster2", 2, models.StatusSuccess)
-			suite.stubDbGetSyncedSecret(nil, repository.ErrSecretNotFound, "cluster1")
-			suite.mockRepo.On("UpdateSyncedSecretStatus", clusterOneSecret).Return(repository.ErrDatabaseGeneric)
-			suite.mockRepo.On("UpdateSyncedSecretStatus", clusterTwoSecret).Return(repository.ErrDatabaseGeneric)
+		suite.Run("return failed result on updating synced secret when error is raised for all clusters", func() {
+			mockRepo, mockVault := suite.builder.
+				WithGetSyncedSecretNotFound(clusters...).
+				WithUpdateSyncedSecretStatusError(repository.ErrDatabaseGeneric, clusters...).
+				SwitchToVaultStage().
+				WithSyncSecretToReplicas(models.StatusSuccess, 2, clusters...).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.mockVault.
-				On("SyncSecretToReplicas", mock.Anything, suite.mount, suite.keyPath).
-				Return([]*models.SyncedSecret{clusterOneSecret, clusterTwoSecret}, nil)
-
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
-
-			result, _ := suite.worker.Execute(suite.ctx)
+			result, _ := worker.Execute(suite.ctx)
 
 			resultStatus := result.Status
 			suite.Len(resultStatus, 2)
 			for _, status := range resultStatus {
 				suite.Equal(status.Status, SyncJobStatusFailed)
-				suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
+				suite.Contains(clusters, status.ClusterName)
 			}
 		})
 
-		suite.Run("return failed result on deleting synced secret by vault client when it fails in one cluster", func() {
-			clusterSecret := suite.newSyncSecret("cluster1", 2, models.StatusSuccess)
-			suite.stubDbGetSyncedSecret(clusterSecret, nil, "cluster1", "cluster2")
-			suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster1").Return(nil)
-			suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster2").Return(nil)
-			suite.mockVault.
-				On("DeleteSecretFromReplicas", mock.Anything, suite.mount, suite.keyPath).
-				Return([]*models.SyncSecretDeletionResult{
-					suite.newSyncSecretDeletionResult("cluster1", 2, models.StatusFailed),
-					suite.newSyncSecretDeletionResult("cluster2", 2, models.StatusDeleted),
-				}, nil)
-			suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(false, nil)
+		suite.Run("return error on deleting synced secret when error is raised for single cluster", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).WithGetSyncedSecret(clusters...).
+				WithDeleteSyncedSecretError(repository.ErrDatabaseGeneric, cluster1).
+				WithDeleteSyncedSecret(cluster2).
+				SwitchToVaultStage().
+				WithVaultSecretExists(false).
+				WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			_, err := worker.Execute(suite.ctx)
 
-			result, _ := suite.worker.Execute(suite.ctx)
-
-			resultStatus := result.Status
-			suite.Len(resultStatus, 2)
-			for _, status := range resultStatus {
-				if status.ClusterName == "cluster1" {
-					suite.Equal(status.Status, SyncJobStatusErrorDeleting)
-				} else {
-					suite.Equal(status.Status, SyncJobStatusDeleted)
-				}
-				suite.Contains([]string{"cluster1", "cluster2"}, status.ClusterName)
-			}
+			suite.Error(err)
+			suite.Equal(repository.ErrDatabaseGeneric, err)
 		})
 
-		suite.Run("return error on deleting synced secret when DB fails deleting", func() {
-			clusterSecret := suite.newSyncSecret("cluster1", 2, models.StatusSuccess)
-			suite.stubDbGetSyncedSecret(clusterSecret, nil, "cluster1", "cluster2")
-			suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster1").Return(nil)
-			suite.mockRepo.On("DeleteSyncedSecret", suite.mount, suite.keyPath, "cluster2").Return(repository.ErrDatabaseGeneric)
-			suite.mockVault.
-				On("DeleteSecretFromReplicas", mock.Anything, suite.mount, suite.keyPath).
-				Return([]*models.SyncSecretDeletionResult{
-					suite.newSyncSecretDeletionResult("cluster1", 2, models.StatusDeleted),
-					suite.newSyncSecretDeletionResult("cluster2", 2, models.StatusDeleted),
-				}, nil)
-			suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(false, nil)
+		suite.Run("return error on deleting synced secret when error is raised for all clusters", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).WithGetSyncedSecret(clusters...).
+				WithDeleteSyncedSecretError(repository.ErrDatabaseGeneric, clusters...).
+				SwitchToVaultStage().
+				WithVaultSecretExists(false).
+				WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
-
-			_, err := suite.worker.Execute(suite.ctx)
+			_, err := worker.Execute(suite.ctx)
 
 			suite.Error(err)
 			suite.Equal(repository.ErrDatabaseGeneric, err)
 		})
 	})
 
-	suite.Run("report an error when vault client fails", func() {
-		suite.Run("returns an error on SyncSecretToReplicas", func() {
-			suite.stubDbGetSyncedSecret(nil, repository.ErrSecretNotFound, "cluster1")
-			suite.mockVault.On("SyncSecretToReplicas", mock.Anything, suite.mount, suite.keyPath).Return(nil, fmt.Errorf("failed to sync secret"))
+	suite.Run("vault client failures", func() {
+		suite.Run("returns an error when SyncSecretToReplicas returns an error", func() {
+			mockRepo, mockVault := suite.builder.
+				WithGetSyncedSecretNotFound(clusters...).
+				SwitchToVaultStage().
+				WithVaultSecretExists(true).
+				WithSyncSecretToReplicasError(fmt.Errorf("failed to sync secret")).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			_, err := worker.Execute(suite.ctx)
 
-			_, err := suite.worker.Execute(suite.ctx)
 			suite.Error(err)
 			suite.Equal(fmt.Errorf("failed to sync secret"), err)
 		})
 
-		suite.Run("returns an error on SecretExists", func() {
-			suite.stubDbGetSyncedSecret(suite.newSyncSecret("cluster1", 2, models.StatusSuccess), nil, "cluster1", "cluster2")
-			suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(false, fmt.Errorf("failed to check secret existence"))
+		suite.Run("returns an error when SecretExists returns an error", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).
+				WithGetSyncedSecret(clusters...).
+				SwitchToVaultStage().
+				WithVaultSecretExistsError(fmt.Errorf("failed to check secret existence")).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			_, err := worker.Execute(suite.ctx)
 
-			_, err := suite.worker.Execute(suite.ctx)
 			suite.Error(err)
 			suite.Equal(fmt.Errorf("failed to check secret existence"), err)
 		})
 
-		suite.Run("returns an error on GetSecretMetadata", func() {
-			suite.stubDbGetSyncedSecret(suite.newSyncSecret("cluster1", 2, models.StatusSuccess), nil, "cluster1", "cluster2")
-			suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(true, nil)
-			suite.mockVault.On("GetSecretMetadata", mock.Anything, suite.mount, suite.keyPath).Return(nil, fmt.Errorf("failed to get secret metadata"))
+		suite.Run("returns an error when GetSecretMetadata returns an error", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).
+				WithGetSyncedSecret(clusters...).
+				SwitchToVaultStage().
+				WithVaultSecretExists(true).
+				WithGetSecretMetadataError(fmt.Errorf("failed to get secret metadata")).
+				Build()
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			_, err := worker.Execute(suite.ctx)
 
-			_, err := suite.worker.Execute(suite.ctx)
 			suite.Error(err)
 			suite.Equal(fmt.Errorf("failed to get secret metadata"), err)
 		})
 
-		suite.Run("returns an error on DeleteSecretFromReplicas", func() {
-			suite.stubDbGetSyncedSecret(suite.newSyncSecret("cluster1", 2, models.StatusSuccess), nil, "cluster1", "cluster2")
-			suite.mockVault.On("SecretExists", mock.Anything, suite.mount, suite.keyPath).Return(false, nil)
-			suite.mockVault.On("DeleteSecretFromReplicas", mock.Anything, suite.mount, suite.keyPath).Return(nil, fmt.Errorf("failed to delete secret from replicas"))
+		suite.Run("returns an error when DeleteSecretFromReplicas returns an error", func() {
+			mockRepo, mockVault := suite.builder.
+				WithDatabaseSecretVersion(1).
+				WithGetSyncedSecret(clusters...).
+				SwitchToVaultStage().
+				WithVaultSecretExists(false).
+				WithDeleteSecretFromReplicasError(fmt.Errorf("failed to delete secret from replicas")).
+				Build()
 
-			suite.worker = NewSyncJob(suite.mount, suite.keyPath, suite.mockVault, suite.mockRepo)
+			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
-			_, err := suite.worker.Execute(suite.ctx)
+			_, err := worker.Execute(suite.ctx)
+
 			suite.Error(err)
 			suite.Equal(fmt.Errorf("failed to delete secret from replicas"), err)
 		})
 	})
-}
-
-// stub factory methods
-func (suite *SyncJobTestSuite) stubDbUpdateSyncedSecretStatus(cluster string, version int64, status models.SyncStatus) {
-	suite.mockRepo.On("UpdateSyncedSecretStatus",
-		&models.SyncedSecret{
-			SecretBackend:      suite.mount,
-			SecretPath:         suite.keyPath,
-			DestinationCluster: cluster,
-			SourceVersion:      version,
-			Status:             status,
-		}).Return(nil)
-}
-
-func (suite *SyncJobTestSuite) stubDbGetSyncedSecret(returnVal *models.SyncedSecret, err error, clusterNames ...string) {
-	for _, clusterName := range clusterNames {
-		var syncedSecret *models.SyncedSecret
-		if returnVal != nil {
-			syncedSecret = &models.SyncedSecret{
-				SecretBackend:      returnVal.SecretBackend,
-				SecretPath:         returnVal.SecretPath,
-				DestinationCluster: clusterName,
-				SourceVersion:      returnVal.SourceVersion,
-				Status:             returnVal.Status,
-			}
-		}
-		suite.mockRepo.On("GetSyncedSecret", suite.mount, suite.keyPath, clusterName).Return(syncedSecret, err)
-	}
-}
-
-func (suite *SyncJobTestSuite) newSyncSecret(cluster string, version int64, status models.SyncStatus) *models.SyncedSecret {
-	return &models.SyncedSecret{
-		SecretBackend:      suite.mount,
-		SecretPath:         suite.keyPath,
-		DestinationCluster: cluster,
-		SourceVersion:      version,
-		Status:             status,
-	}
-}
-
-func (suite *SyncJobTestSuite) newSyncSecretDeletionResult(cluster string, version int64, status models.SyncStatus) *models.SyncSecretDeletionResult {
-	return &models.SyncSecretDeletionResult{
-		SecretBackend:      suite.mount,
-		SecretPath:         suite.keyPath,
-		DestinationCluster: cluster,
-		Status:             status,
-	}
 }
