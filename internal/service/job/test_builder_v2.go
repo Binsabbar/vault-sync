@@ -10,16 +10,15 @@ import (
 )
 
 type (
-	MockInitialStage interface {
-		WithMount(mount string) MockInitialStage
-		WithKeyPath(keyPath string) MockInitialStage
+	MockBuilderInit interface {
+		WithMount(mount string) MockBuilderInit
+		WithKeyPath(keyPath string) MockBuilderInit
 		WithClusters(clusters ...string) MockClustersStage
 	}
 
 	MockClustersStage interface {
 		WithDatabaseSecretVersion(version int64) MockDatabaseSecretVersionStage
-		WithNotFoundGetSyncedSecret(clusters ...string) MockDatabaseStage
-		WithGetSyncedSecretError(err error, clusters ...string) MockDatabaseStage
+		ToVaultStage() MockVaultStage
 	}
 
 	MockDatabaseSecretVersionStage interface {
@@ -27,15 +26,25 @@ type (
 	}
 
 	MockDatabaseStage interface {
-		WithDatabaseSecretVersion(version int64) MockDatabaseStage
-		WithSourceSecretVersion(version int64) MockDatabaseStage
+		WithDatabaseSecretVersion(version int64) MockDatabaseSecretVersionStage
+		WithGetSyncedSecretError(err error, clusters ...string) MockResultStage
+		WithNotFoundGetSyncedSecret(clusters ...string) MockDatabaseStage
 		WithVaultSecretExists(exists bool) MockVaultStage
+		WithUpdateSyncedSecretStatusResult(status models.SyncStatus, version int64, clusters ...string) MockVaultStage
+		WithUpdateError(cluster string, err error) MockResultStage
+		WithDeleteSyncedSecretResult(status models.SyncStatus, clusters ...string) MockVaultStage
+		WithDeleteSyncedSecretError(err error) MockResultStage
+		Build() (*SyncJobMockBuilder, *mockRepository, *mockVaultClient)
 	}
 
 	MockVaultStage interface {
-		WithSyncSecretToReplicasResult(status models.SyncStatus, version int64, clusters ...string) MockResultStage
-		WithDeleteSecretFromReplicasResult(status models.SyncStatus, clusters ...string) MockResultStage
-		WithVaultError(operation string, err error) MockBuildableStage
+		WithVaultSecretExists(exists bool) MockVaultStage
+		WithGetSecretMetadataResult(version int64) MockVaultStage
+		WithGetSecretMetadataError(err error) MockResultStage
+		WithSyncSecretToReplicasResult(status models.SyncStatus, version int64, clusters ...string) MockVaultStage
+		WithSyncSecretToReplicasError(err error) MockResultStage
+		WithDeleteSecretFromReplicasResult(status models.SyncStatus, clusters ...string) MockVaultStage
+		WithDeleteSecretError(err error) MockResultStage
 	}
 
 	MockResultStage interface {
