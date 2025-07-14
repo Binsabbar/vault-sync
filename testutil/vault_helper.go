@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 	"time"
+	"vault-sync/internal/config"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
-	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/vault"
@@ -35,8 +35,8 @@ type VaultClusterConfig struct {
 	Token       string
 }
 
-func NewVaultClusters(t require.TestingT, ctx context.Context, numberOfReplicas int) (*VaultClustersHelper, error) {
-	mainClusterC, err := NewVaultClusterContainer(t, ctx, "main-cluster")
+func NewVaultClusters(ctx context.Context, numberOfReplicas int) (*VaultClustersHelper, error) {
+	mainClusterC, err := NewVaultClusterContainer(ctx, "main-cluster")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create main vault cluster: %w", err)
 	}
@@ -44,7 +44,7 @@ func NewVaultClusters(t require.TestingT, ctx context.Context, numberOfReplicas 
 	replicaClusters := make([]*VaultHelper, numberOfReplicas)
 	for i := range replicaClusters {
 		replicaName := fmt.Sprintf("replica-%d", i)
-		replicaCluster, err := NewVaultClusterContainer(t, ctx, replicaName)
+		replicaCluster, err := NewVaultClusterContainer(ctx, replicaName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create replica vault cluster %q: %w", replicaName, err)
 		}
@@ -57,7 +57,7 @@ func NewVaultClusters(t require.TestingT, ctx context.Context, numberOfReplicas 
 	}, nil
 }
 
-func NewVaultClusterContainer(t require.TestingT, ctx context.Context, clusterName string) (*VaultHelper, error) {
+func NewVaultClusterContainer(ctx context.Context, clusterName string) (*VaultHelper, error) {
 	pm := getPortManager()
 	randomPort, err := pm.reservePort()
 	if err != nil {
@@ -381,4 +381,143 @@ func extractSecretDataFromResponse(jsonStr string) (secretData map[string]string
 	}
 
 	return secretData, int64(versionFloat), nil
+}
+
+type QuickVaultHelperSetup struct {
+	clusterHelper  *VaultClustersHelper
+	MainVault      *VaultHelper
+	MainConfig     *config.VaultClusterConfig
+	Replica1Vault  *VaultHelper
+	Replica2Vault  *VaultHelper
+	ReplicasConfig []*config.VaultClusterConfig
+}
+
+// Common function to setup container quickly
+func SetupOneMainTwoReplicaClusters(mounts ...string) *QuickVaultHelperSetup {
+	ctx := context.Background()
+	clusters, err := NewVaultClusters(ctx, 2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create vault clusters: %v", err))
+	}
+	result := &QuickVaultHelperSetup{
+		clusterHelper: clusters,
+		MainVault:     clusters.MainVaultCluster,
+		Replica1Vault: clusters.ReplicasClusters[0],
+		Replica2Vault: clusters.ReplicasClusters[1],
+	}
+
+	result.MainConfig, result.ReplicasConfig = SetupExistingClusters(clusters.MainVaultCluster, clusters.ReplicasClusters[0], clusters.ReplicasClusters[1], mounts...)
+
+	return result
+}
+
+func checkErrorP(msg string, err error) {
+	if err != nil {
+		panic(fmt.Sprintf(msg, err))
+	}
+}
+
+func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
+	ctx := context.Background()
+	helpers := []*VaultHelper{mainCluster, replica1, replica2}
+	errors := make(chan error, len(helpers))
+	var err error
+
+	for _, vaultHelper := range helpers {
+		go func(vaultHelper *VaultHelper) {
+			err := vaultHelper.Start(ctx)
+			if err != nil {
+				errors <- fmt.Errorf("failed to start vault helper: %w", err)
+				return
+			}
+			err1 := vaultHelper.EnableAppRoleAuth(ctx)
+			err2 := vaultHelper.EnableKVv2Mounts(ctx, mounts...)
+			if err1 != nil {
+				errors <- fmt.Errorf("failed to enable AppRole auth method: %w", err1)
+				return
+			} else if err2 != nil {
+				errors <- fmt.Errorf("failed to enable KV v2 mounts: %w", err2)
+				return
+			}
+			errors <- nil
+		}(vaultHelper)
+	}
+
+	handleErrorsChan(errors, len(helpers))
+
+	mainConfig := &config.VaultClusterConfig{
+		Name:          mainCluster.Config.ClusterName,
+		Address:       mainCluster.Config.Address,
+		AppRoleMount:  "approle",
+		TLSSkipVerify: true,
+	}
+	mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(ctx, "main", mounts...)
+	checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
+
+	replica1Config := &config.VaultClusterConfig{
+		Name:          replica1.Config.ClusterName,
+		Address:       replica1.Config.Address,
+		AppRoleMount:  "approle",
+		TLSSkipVerify: true,
+	}
+	replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
+	checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
+
+	replica2Config := &config.VaultClusterConfig{
+		Name:          replica2.Config.ClusterName,
+		Address:       replica2.Config.Address,
+		AppRoleMount:  "approle",
+		TLSSkipVerify: true,
+	}
+	replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
+	checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
+
+	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
+
+}
+
+func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper) {
+	ctx := context.Background()
+	errors := make(chan error, 3)
+
+	go func() {
+		errors <- mainCluster.Terminate(ctx)
+	}()
+	go func() {
+		errors <- replica1.Terminate(ctx)
+	}()
+	go func() {
+		errors <- replica2.Terminate(ctx)
+	}()
+
+	handleErrorsChan(errors, 3)
+}
+
+func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) {
+	ctx := context.Background()
+	errors := make(chan error, 3)
+	helpers := []*VaultHelper{mainCluster, replica1, replica2}
+	for _, helper := range helpers {
+		go func(vaultHelper *VaultHelper) {
+			if err := vaultHelper.Start(ctx); err != nil {
+				errors <- fmt.Errorf("failed to start vault helper: %w", err)
+				return
+			}
+			errors <- vaultHelper.QuickReset(ctx, mounts...)
+		}(helper)
+	}
+	handleErrorsChan(errors, 3)
+}
+
+func handleErrorsChan(errors chan error, expectedCount int) {
+	for range expectedCount {
+		select {
+		case err := <-errors:
+			if err != nil {
+				panic(fmt.Sprintf("Error during test setup/teardown: %v", err))
+			}
+		case <-time.After(10 * time.Second):
+			panic("Timed out waiting for vault helpers to terminate")
+		}
+	}
 }

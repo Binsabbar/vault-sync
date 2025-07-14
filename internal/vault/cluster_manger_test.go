@@ -27,7 +27,7 @@ func (suite *ClusterManagerTestSuite) SetupTest() {
 	var err error
 
 	suite.ctx = context.Background()
-	suite.vaultHelper, err = testutil.NewVaultClusterContainer(suite.T(), suite.ctx, "test-cluster")
+	suite.vaultHelper, err = testutil.NewVaultClusterContainer(suite.ctx, "test-cluster")
 	suite.Require().NoError(err)
 
 	suite.vaultHelper.EnableAppRoleAuth(suite.ctx)
