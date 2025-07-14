@@ -30,75 +30,25 @@ var mounts = []string{"team-a", "team-b", "team-c"}
 
 func (suite *MultiClusterVaultClientTestSuite) SetupSuite() {
 	suite.ctx = context.Background()
-	clusters, err := testutil.NewVaultClusters(suite.T(), suite.ctx, 2)
-	suite.NoError(err)
-
-	suite.mainVault = clusters.MainVaultCluster
-	suite.replica1Vault = clusters.ReplicasClusters[0]
-	suite.replica2Vault = clusters.ReplicasClusters[1]
+	result := testutil.SetupOneMainTwoReplicaClusters(mounts...)
+	suite.mainVault = result.MainVault
+	suite.replica1Vault = result.Replica1Vault
+	suite.replica2Vault = result.Replica2Vault
 }
 
 func (suite *MultiClusterVaultClientTestSuite) SetupSubTest() {
-	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
-	errors := make(chan error, len(helpers))
-
-	for _, vaultHelper := range helpers {
-		go func(vaultHelper *testutil.VaultHelper) {
-			err := vaultHelper.Start(suite.ctx)
-			if err != nil {
-				errors <- fmt.Errorf("failed to start vault helper: %w", err)
-				return
-			}
-			err1 := vaultHelper.EnableAppRoleAuth(suite.ctx)
-			err2 := vaultHelper.EnableKVv2Mounts(suite.ctx, mounts...)
-			if err1 != nil {
-				errors <- fmt.Errorf("failed to enable AppRole auth method: %w", err1)
-				return
-			} else if err2 != nil {
-				errors <- fmt.Errorf("failed to enable KV v2 mounts: %w", err2)
-				return
-			}
-			errors <- nil
-		}(vaultHelper)
-	}
-
-	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
-
-	suite.mainConfig, suite.replicaConfig = suite.setupMultiClusterVaultClientTestSuite()
+	suite.mainConfig, suite.replicaConfig = testutil.SetupExistingClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TearDownSuite() {
-	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
-	errors := make(chan error, len(helpers))
-	for _, helper := range helpers {
-		if helper != nil {
-			go func(helper *testutil.VaultHelper) {
-				err := helper.Terminate(suite.ctx)
-				errors <- err
-			}(helper)
-		}
-	}
-
-	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
-
+	testutil.TerminateAllClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault)
 	suite.mainVault = nil
 	suite.replica1Vault = nil
 	suite.replica2Vault = nil
 }
 
 func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
-	helpers := []*testutil.VaultHelper{suite.mainVault, suite.replica1Vault, suite.replica2Vault}
-	errors := make(chan error, len(helpers))
-
-	for _, vaultHelper := range helpers {
-		go func(vaultHelper *testutil.VaultHelper) {
-			vaultHelper.Start(suite.ctx)
-			err := vaultHelper.QuickReset(suite.ctx, mounts...)
-			errors <- err
-		}(vaultHelper)
-	}
-
-	suite.handleTestSetUpTearDownErrors(errors, len(helpers))
+	testutil.QuickResetClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
 }
 
 func (suite *MultiClusterVaultClientTestSuite) handleTestSetUpTearDownErrors(errors chan error, expectedCount int) {
@@ -894,32 +844,4 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 
 		})
 	})
-}
-
-func (suite *MultiClusterVaultClientTestSuite) setupMultiClusterVaultClientTestSuite() (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
-	mainConfig := &config.VaultClusterConfig{
-		Name:          suite.mainVault.Config.ClusterName,
-		Address:       suite.mainVault.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
-	}
-	mainConfig.AppRoleID, mainConfig.AppRoleSecret, _ = suite.mainVault.CreateApproleWithReadPermissions(suite.ctx, "main", mounts...)
-
-	replica1Config := &config.VaultClusterConfig{
-		Name:          suite.replica1Vault.Config.ClusterName,
-		Address:       suite.replica1Vault.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
-	}
-	replica1Config.AppRoleID, replica1Config.AppRoleSecret, _ = suite.replica1Vault.CreateApproleWithRWPermissions(suite.ctx, "replica-1", mounts...)
-
-	replica2Config := &config.VaultClusterConfig{
-		Name:          suite.replica2Vault.Config.ClusterName,
-		Address:       suite.replica2Vault.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
-	}
-	replica2Config.AppRoleID, replica2Config.AppRoleSecret, _ = suite.replica2Vault.CreateApproleWithRWPermissions(suite.ctx, "replica-2", mounts...)
-
-	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
 }
