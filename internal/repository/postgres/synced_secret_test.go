@@ -1,8 +1,7 @@
-package repository
+package postgres
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -163,6 +162,19 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			}
 		})
 	}
+
+	suite.Run("not found errors does not trigger circuit breaker", func() {
+		repo := &PostgreSQLSyncedSecretRepository{
+			psql:           suite.db,
+			circuitBreaker: createFastFailCircuitBreaker(),
+			retryOptFunc:   createConstantBackoffRetryFunc(100*time.Millisecond, 2),
+		}
+
+		for i := 0; i < 3; i++ {
+			_, err := repo.GetSyncedSecret("kv", "does/not/exist", "prod")
+			suite.ErrorIs(err, repository.ErrSecretNotFound, "Expected ErrSecretNotFound error")
+		}
+	})
 }
 
 func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
@@ -637,12 +649,6 @@ func (suite *SyncedSecretRepositoryTestSuite) insertSecret(backend, path, cluste
 		ErrorMessage:       nil,
 	}
 	suite.insertTestSecret(secret)
-}
-
-func (suite *SyncedSecretRepositoryTestSuite) insertRandomSecrets(count int) {
-	for i := 0; i < count; i++ {
-		suite.insertSecret("kv", fmt.Sprintf("test/path/%d", i+1), "prod")
-	}
 }
 
 func (suite *SyncedSecretRepositoryTestSuite) insertTestSecret(secret *models.SyncedSecret) {
