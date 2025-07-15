@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -81,7 +81,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				logger.Debug().Msg(repository.ErrSecretNotFound.Error())
-				return nil, repository.ErrSecretNotFound
+				return nil, nil
 			}
 			logger.Error().Err(err).Msg("error occurred while getting synced secret")
 			return nil, fmt.Errorf("error occurred while getting synced secret: %w", err)
@@ -91,9 +91,11 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 		return secret, nil
 	}
 
-	secret, err := executeOperationInCircuitBreaker(repo, false, dbOperation)
+	secret, err := executeOperationInCircuitBreaker(repo, true, dbOperation)
 	if err != nil {
 		return nil, err
+	} else if secret == nil {
+		return secret, repository.ErrSecretNotFound
 	}
 
 	return secret, nil
@@ -250,9 +252,6 @@ func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err erro
 	case errors.Is(err, gobreaker.ErrOpenState), errors.Is(err, gobreaker.ErrTooManyRequests):
 		return fmt.Errorf("%w: circuit breaker is open", repository.ErrDatabaseUnavailable)
 	default:
-		if err.Error() == "backoff: retry limit exceeded" {
-			return fmt.Errorf("%w: retry limit exceeded", repository.ErrDatabaseUnavailable)
-		}
 		return fmt.Errorf("%w: %w", repository.ErrDatabaseGeneric, err)
 	}
 }
