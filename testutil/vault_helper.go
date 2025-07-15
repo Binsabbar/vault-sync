@@ -243,7 +243,7 @@ func (v *VaultHelper) WriteSecret(ctx context.Context, mount, path string, data 
 
 // DeleteSecret deletes a secret at the specified path
 func (v *VaultHelper) DeleteSecret(ctx context.Context, secretPath string) (string, error) {
-	cmd := fmt.Sprintf("vault kv delete %s", secretPath)
+	cmd := fmt.Sprintf("vault kv metadata delete %s", secretPath)
 	return v.ExecuteVaultCommand(ctx, cmd)
 }
 
@@ -299,6 +299,45 @@ func (v *VaultHelper) QuickReset(ctx context.Context, mounts ...string) error {
 		}
 	}
 
+	return nil
+}
+func (v *VaultHelper) ListKeys(ctx context.Context, mount, path string) ([]string, error) {
+	cmd := fmt.Sprintf("vault kv list -format=json %s/%s", mount, path)
+	output, err := v.ExecuteVaultCommand(ctx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list keys at %s/%s: %w", mount, path, err)
+	}
+	output = strings.TrimSpace(output)
+	if output == "" || output == "{}" || output == "null" {
+		return []string{}, nil
+	}
+
+	var keys []string
+	if err := json.Unmarshal([]byte(output), &keys); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON output: %w", err)
+	}
+	return keys, nil
+}
+
+func (v *VaultHelper) DeleteAllSecretsKVv2(ctx context.Context, mount, path string) error {
+	keys, err := v.ListKeys(ctx, mount, path)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if strings.HasSuffix(key, "/") {
+			err := v.DeleteAllSecretsKVv2(ctx, mount, path+"/"+strings.TrimSuffix(key, "/"))
+			if err != nil {
+				return err
+			}
+		} else {
+			// Delete the secret
+			_, err := v.DeleteSecret(ctx, fmt.Sprintf("%s/%s", mount, path+key))
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -443,7 +482,7 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 		}(vaultHelper)
 	}
 
-	handleErrorsChan(errors, len(helpers))
+	handleErrorsChan("SetupExistingClusters", errors, len(helpers))
 
 	mainConfig := &config.VaultClusterConfig{
 		Name:          mainCluster.Config.ClusterName,
@@ -490,7 +529,7 @@ func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repli
 		errors <- replica2.Terminate(ctx)
 	}()
 
-	handleErrorsChan(errors, 3)
+	handleErrorsChan("TerminateAllClusters", errors, 3)
 }
 
 func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) {
@@ -506,18 +545,41 @@ func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica
 			errors <- vaultHelper.QuickReset(ctx, mounts...)
 		}(helper)
 	}
-	handleErrorsChan(errors, 3)
+	handleErrorsChan("QuickResetClusters", errors, 3)
 }
 
-func handleErrorsChan(errors chan error, expectedCount int) {
+func TruncateSecrets(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	errors := make(chan error, 3)
+	helpers := []*VaultHelper{mainCluster, replica1, replica2}
+	for _, helper := range helpers {
+		go func(vaultHelper *VaultHelper) {
+			if err := vaultHelper.Start(ctx); err != nil {
+				errors <- fmt.Errorf("failed to start vault helper: %w", err)
+				return
+			}
+			for _, mount := range mounts {
+				if err := vaultHelper.DeleteAllSecretsKVv2(ctx, mount, ""); err != nil {
+					errors <- fmt.Errorf("failed to delete all secrets in mount %s: %w", mount, err)
+					return
+				}
+			}
+			errors <- nil
+		}(helper)
+	}
+	handleErrorsChan("TruncateSecrets", errors, 3)
+}
+
+func handleErrorsChan(context string, errors chan error, expectedCount int) {
 	for range expectedCount {
 		select {
 		case err := <-errors:
 			if err != nil {
-				panic(fmt.Sprintf("Error during test setup/teardown: %v", err))
+				panic(fmt.Sprintf("Error during %s: %v", context, err))
 			}
-		case <-time.After(10 * time.Second):
-			panic("Timed out waiting for vault helpers to terminate")
+		case <-time.After(20 * time.Second):
+			panic("Timed out waiting for vault helpers to complete operation " + context)
 		}
 	}
 }
