@@ -118,7 +118,7 @@ func (p *PostgresHelper) Start(ctx context.Context) error {
 }
 
 func (p *PostgresHelper) ExecutePsqlCommand(ctx context.Context, sqlCommand string) (string, error) {
-	command := fmt.Sprintf(`psql -U %s -d %s -c "%s"`, p.Config.Username, p.Config.DBName, sqlCommand)
+	command := fmt.Sprintf(`psql -t -U %s -d %s -c "%s"`, p.Config.Username, p.Config.DBName, sqlCommand)
 
 	_, output, err := p.Container.Exec(ctx, []string{"sh", "-c", command}, exec.Multiplexed())
 	if err != nil {
