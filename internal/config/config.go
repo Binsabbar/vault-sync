@@ -21,19 +21,28 @@ type VaultConfig struct {
 
 // Load loads configuration from file or command line arguments
 func Load(configPath, source, target, token string) (*Config, error) {
-	var cfg *Config
-	
-	if configPath != "" {
-		fileConfig, err := loadFromFile(configPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
-		}
-		cfg = fileConfig
-	} else {
-		cfg = &Config{}
+	cfg, err := loadConfiguration(configPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Override with command line arguments if provided
+	applyCommandLineOverrides(cfg, source, target, token)
+
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return cfg, nil
+}
+
+func loadConfiguration(configPath string) (*Config, error) {
+	if configPath != "" {
+		return loadFromFile(configPath)
+	}
+	return &Config{}, nil
+}
+
+func applyCommandLineOverrides(cfg *Config, source, target, token string) {
 	if source != "" {
 		cfg.Source.Address = source
 	}
@@ -44,40 +53,38 @@ func Load(configPath, source, target, token string) (*Config, error) {
 		cfg.Source.Token = token
 		cfg.Target.Token = token
 	}
-
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	return cfg, nil
 }
 
 func loadFromFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read config file '%s': %w", path, err)
 	}
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config file '%s': %w", path, err)
 	}
 
 	return &config, nil
 }
 
 func (c *Config) validate() error {
-	if c.Source.Address == "" {
-		return fmt.Errorf("source vault address is required")
+	if err := c.validateVaultConfig("source", c.Source); err != nil {
+		return err
 	}
-	if c.Target.Address == "" {
-		return fmt.Errorf("target vault address is required")
+	if err := c.validateVaultConfig("target", c.Target); err != nil {
+		return err
 	}
-	if c.Source.Token == "" {
-		return fmt.Errorf("source vault token is required")
+	return nil
+}
+
+func (c *Config) validateVaultConfig(name string, cfg VaultConfig) error {
+	if cfg.Address == "" {
+		return fmt.Errorf("%s vault address is required", name)
 	}
-	if c.Target.Token == "" {
-		return fmt.Errorf("target vault token is required")
+	if cfg.Token == "" {
+		return fmt.Errorf("%s vault token is required", name)
 	}
 	return nil
 }

@@ -14,6 +14,13 @@ type Client struct {
 
 // NewClient creates a new Vault client
 func NewClient(address, token, prefix string) (*Client, error) {
+	if address == "" {
+		return nil, fmt.Errorf("vault address cannot be empty")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("vault token cannot be empty")
+	}
+
 	config := api.DefaultConfig()
 	config.Address = address
 
@@ -36,13 +43,32 @@ type Secret struct {
 	Data map[string]interface{}
 }
 
+// IsEmpty returns true if the secret has no data
+func (s *Secret) IsEmpty() bool {
+	return len(s.Data) == 0
+}
+
+// GetValue returns a specific value from the secret data
+func (s *Secret) GetValue(key string) (interface{}, bool) {
+	value, exists := s.Data[key]
+	return value, exists
+}
+
+// SetValue sets a specific value in the secret data
+func (s *Secret) SetValue(key string, value interface{}) {
+	if s.Data == nil {
+		s.Data = make(map[string]interface{})
+	}
+	s.Data[key] = value
+}
+
 // ListSecrets lists all secrets under the specified path
 func (c *Client) ListSecrets(path string) ([]string, error) {
 	fullPath := c.buildPath(path)
 	
 	secret, err := c.client.Logical().List(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list secrets at %s: %w", fullPath, err)
+		return nil, fmt.Errorf("failed to list secrets at '%s': %w", fullPath, err)
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -54,7 +80,7 @@ func (c *Client) ListSecrets(path string) ([]string, error) {
 		return []string{}, nil
 	}
 
-	var secretPaths []string
+	secretPaths := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if keyStr, ok := key.(string); ok {
 			secretPaths = append(secretPaths, keyStr)
@@ -66,15 +92,19 @@ func (c *Client) ListSecrets(path string) ([]string, error) {
 
 // ReadSecret reads a secret from Vault
 func (c *Client) ReadSecret(path string) (*Secret, error) {
+	if path == "" {
+		return nil, fmt.Errorf("secret path cannot be empty")
+	}
+
 	fullPath := c.buildPath(path)
 	
 	secret, err := c.client.Logical().Read(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read secret at %s: %w", fullPath, err)
+		return nil, fmt.Errorf("failed to read secret at '%s': %w", fullPath, err)
 	}
 
 	if secret == nil {
-		return nil, fmt.Errorf("secret not found at %s", fullPath)
+		return nil, fmt.Errorf("secret not found at '%s'", fullPath)
 	}
 
 	return &Secret{
@@ -85,11 +115,18 @@ func (c *Client) ReadSecret(path string) (*Secret, error) {
 
 // WriteSecret writes a secret to Vault
 func (c *Client) WriteSecret(secret *Secret) error {
+	if secret == nil {
+		return fmt.Errorf("secret cannot be nil")
+	}
+	if secret.Path == "" {
+		return fmt.Errorf("secret path cannot be empty")
+	}
+
 	fullPath := c.buildPath(secret.Path)
 	
 	_, err := c.client.Logical().Write(fullPath, secret.Data)
 	if err != nil {
-		return fmt.Errorf("failed to write secret to %s: %w", fullPath, err)
+		return fmt.Errorf("failed to write secret to '%s': %w", fullPath, err)
 	}
 
 	return nil
@@ -98,6 +135,9 @@ func (c *Client) WriteSecret(secret *Secret) error {
 func (c *Client) buildPath(path string) string {
 	if c.prefix == "" {
 		return path
+	}
+	if path == "" {
+		return c.prefix
 	}
 	return c.prefix + "/" + path
 }

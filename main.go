@@ -42,7 +42,12 @@ func runSync(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	syncer := sync.New(cfg)
+	syncer, err := sync.New(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create syncer: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := syncer.Sync(dryRun); err != nil {
 		fmt.Fprintf(os.Stderr, "Sync failed: %v\n", err)
 		os.Exit(1)

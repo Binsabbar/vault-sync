@@ -19,10 +19,22 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
-func TestNewClient_InvalidAddress(t *testing.T) {
-	// The Vault API client doesn't validate URL format at creation time
-	// It will validate at connection time, so this test should pass
-	client, err := NewClient("invalid-url", "test-token", "")
+func TestNewClient_EmptyAddress(t *testing.T) {
+	_, err := NewClient("", "test-token", "")
+	if err == nil {
+		t.Fatal("Expected error for empty address, got nil")
+	}
+}
+
+func TestNewClient_EmptyToken(t *testing.T) {
+	_, err := NewClient("http://localhost:8200", "", "")
+	if err == nil {
+		t.Fatal("Expected error for empty token, got nil")
+	}
+}
+
+func TestNewClient_ValidConfig(t *testing.T) {
+	client, err := NewClient("http://localhost:8200", "test-token", "")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -54,7 +66,13 @@ func TestBuildPath(t *testing.T) {
 			name:     "empty path with prefix",
 			prefix:   "secret",
 			path:     "",
-			expected: "secret/",
+			expected: "secret",
+		},
+		{
+			name:     "empty path without prefix",
+			prefix:   "",
+			path:     "",
+			expected: "",
 		},
 	}
 	
@@ -69,7 +87,7 @@ func TestBuildPath(t *testing.T) {
 	}
 }
 
-func TestSecret(t *testing.T) {
+func TestSecret_Methods(t *testing.T) {
 	secret := &Secret{
 		Path: "myapp/config",
 		Data: map[string]interface{}{
@@ -78,6 +96,7 @@ func TestSecret(t *testing.T) {
 		},
 	}
 	
+	// Test basic properties
 	if secret.Path != "myapp/config" {
 		t.Errorf("Expected path 'myapp/config', got '%s'", secret.Path)
 	}
@@ -86,7 +105,75 @@ func TestSecret(t *testing.T) {
 		t.Errorf("Expected 2 data entries, got %d", len(secret.Data))
 	}
 	
-	if secret.Data["key1"] != "value1" {
-		t.Errorf("Expected 'value1', got '%v'", secret.Data["key1"])
+	// Test IsEmpty
+	if secret.IsEmpty() {
+		t.Error("Expected secret to not be empty")
+	}
+	
+	// Test GetValue
+	value, exists := secret.GetValue("key1")
+	if !exists {
+		t.Error("Expected key1 to exist")
+	}
+	if value != "value1" {
+		t.Errorf("Expected 'value1', got '%v'", value)
+	}
+	
+	_, exists = secret.GetValue("nonexistent")
+	if exists {
+		t.Error("Expected nonexistent key to not exist")
+	}
+	
+	// Test SetValue
+	secret.SetValue("key3", "value3")
+	if len(secret.Data) != 3 {
+		t.Errorf("Expected 3 data entries after SetValue, got %d", len(secret.Data))
+	}
+	
+	value, exists = secret.GetValue("key3")
+	if !exists || value != "value3" {
+		t.Errorf("Expected key3 to be 'value3', got '%v'", value)
+	}
+}
+
+func TestSecret_IsEmpty(t *testing.T) {
+	emptySecret := &Secret{
+		Path: "test",
+		Data: map[string]interface{}{},
+	}
+	
+	if !emptySecret.IsEmpty() {
+		t.Error("Expected empty secret to be empty")
+	}
+	
+	nilDataSecret := &Secret{
+		Path: "test",
+		Data: nil,
+	}
+	
+	if !nilDataSecret.IsEmpty() {
+		t.Error("Expected nil data secret to be empty")
+	}
+}
+
+func TestSecret_SetValueOnNilData(t *testing.T) {
+	secret := &Secret{
+		Path: "test",
+		Data: nil,
+	}
+	
+	secret.SetValue("key", "value")
+	
+	if secret.Data == nil {
+		t.Fatal("Expected Data to be initialized")
+	}
+	
+	if len(secret.Data) != 1 {
+		t.Errorf("Expected 1 data entry, got %d", len(secret.Data))
+	}
+	
+	value, exists := secret.GetValue("key")
+	if !exists || value != "value" {
+		t.Errorf("Expected key to be 'value', got '%v'", value)
 	}
 }

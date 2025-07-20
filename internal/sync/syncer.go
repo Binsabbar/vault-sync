@@ -7,24 +7,39 @@ import (
 	"github.com/Binsabbar/vault-sync/internal/vault"
 )
 
+// VaultClient defines the interface for interacting with Vault
+type VaultClient interface {
+	ListSecrets(path string) ([]string, error)
+	ReadSecret(path string) (*vault.Secret, error)
+	WriteSecret(secret *vault.Secret) error
+}
+
 // Syncer handles synchronization between Vault instances
 type Syncer struct {
-	sourceClient *vault.Client
-	targetClient *vault.Client
+	sourceClient VaultClient
+	targetClient VaultClient
 }
 
 // New creates a new Syncer instance
-func New(cfg *config.Config) *Syncer {
+func New(cfg *config.Config) (*Syncer, error) {
 	sourceClient, err := vault.NewClient(cfg.Source.Address, cfg.Source.Token, cfg.Source.Prefix)
 	if err != nil {
-		panic(fmt.Sprintf("failed to create source client: %v", err))
+		return nil, fmt.Errorf("failed to create source client: %w", err)
 	}
 
 	targetClient, err := vault.NewClient(cfg.Target.Address, cfg.Target.Token, cfg.Target.Prefix)
 	if err != nil {
-		panic(fmt.Sprintf("failed to create target client: %v", err))
+		return nil, fmt.Errorf("failed to create target client: %w", err)
 	}
 
+	return &Syncer{
+		sourceClient: sourceClient,
+		targetClient: targetClient,
+	}, nil
+}
+
+// NewWithClients creates a new Syncer with provided clients (useful for testing)
+func NewWithClients(sourceClient, targetClient VaultClient) *Syncer {
 	return &Syncer{
 		sourceClient: sourceClient,
 		targetClient: targetClient,
@@ -33,24 +48,35 @@ func New(cfg *config.Config) *Syncer {
 
 // Sync synchronizes secrets from source to target
 func (s *Syncer) Sync(dryRun bool) error {
-	secrets, err := s.sourceClient.ListSecrets("")
+	return s.SyncPath("", dryRun)
+}
+
+// SyncPath synchronizes secrets from a specific path
+func (s *Syncer) SyncPath(path string, dryRun bool) error {
+	secrets, err := s.sourceClient.ListSecrets(path)
 	if err != nil {
-		return fmt.Errorf("failed to list source secrets: %w", err)
+		return fmt.Errorf("failed to list source secrets at path '%s': %w", path, err)
 	}
 
 	for _, secretPath := range secrets {
-		if err := s.syncSecret(secretPath, dryRun); err != nil {
-			return fmt.Errorf("failed to sync secret %s: %w", secretPath, err)
+		fullPath := s.buildSecretPath(path, secretPath)
+		if err := s.syncSecret(fullPath, dryRun); err != nil {
+			return fmt.Errorf("failed to sync secret '%s': %w", fullPath, err)
 		}
 	}
 
 	return nil
 }
 
+// SyncSecret synchronizes a single secret (exported for testing)
+func (s *Syncer) SyncSecret(path string, dryRun bool) error {
+	return s.syncSecret(path, dryRun)
+}
+
 func (s *Syncer) syncSecret(path string, dryRun bool) error {
 	secret, err := s.sourceClient.ReadSecret(path)
 	if err != nil {
-		return fmt.Errorf("failed to read secret: %w", err)
+		return fmt.Errorf("failed to read secret from source: %w", err)
 	}
 
 	if dryRun {
@@ -59,9 +85,16 @@ func (s *Syncer) syncSecret(path string, dryRun bool) error {
 	}
 
 	if err := s.targetClient.WriteSecret(secret); err != nil {
-		return fmt.Errorf("failed to write secret: %w", err)
+		return fmt.Errorf("failed to write secret to target: %w", err)
 	}
 
 	fmt.Printf("Synced secret: %s\n", path)
 	return nil
+}
+
+func (s *Syncer) buildSecretPath(basePath, secretPath string) string {
+	if basePath == "" {
+		return secretPath
+	}
+	return basePath + "/" + secretPath
 }
