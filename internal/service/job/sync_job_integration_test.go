@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"vault-sync/internal/models"
 	"vault-sync/internal/repository"
@@ -14,7 +15,6 @@ import (
 	"vault-sync/pkg/db/migrations"
 	"vault-sync/testutil"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -43,7 +43,7 @@ func (suite *SyncJobIntegrationTestSuite) SetupSuite() {
 	suite.ctx = context.Background()
 	suite.setupVaultClient()
 	suite.setupRepositoryClient()
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	// zerolog.SetGlobalLevel(zerolog.DebugLevel)
 }
 
 func (suite *SyncJobIntegrationTestSuite) SetupTest() {
@@ -83,8 +83,6 @@ func (suite *SyncJobIntegrationTestSuite) setupRepositoryClient() {
 func TestSyncJobIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(SyncJobIntegrationTestSuite))
 }
-
-var selectQuery = "SELECT row_to_json(t) FROM (SELECT * FROM synced_secrets where secret_backend = '%s' AND secret_path = '%s' AND destination_cluster = '%s') t"
 
 func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 	suite.Run("sync job with secret from main cluster", func() {
@@ -158,6 +156,61 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 			replica2Name: 2,
 		})
 	})
+
+	// Test for deleting a secret
+	suite.Run("sync job with secret deletion from main cluster", func() {
+		keyPath := "secret1"
+		sourceSecretData := map[string]string{
+			"database": "testdb",
+			"username": "testuser",
+			"password": "testpass",
+		}
+		suite.vaultMainHelper.WriteSecret(suite.ctx, teamAMount, keyPath, sourceSecretData)
+		job := NewSyncJob(teamAMount, keyPath, suite.vaultClient, suite.repo)
+
+		// run the initial sync job
+		result, _ := job.Execute(suite.ctx)
+		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{}) //default versions are 1 for both replicas
+
+		// delete the secret in the main cluster
+		suite.vaultMainHelper.DeleteSecret(suite.ctx, fmt.Sprint(teamAMount, "/", keyPath))
+
+		// run the sync job again
+		deleteResult, err := job.Execute(suite.ctx)
+
+		suite.NoError(err)
+		suite.Len(deleteResult.Status, 2)
+		suite.verifySecretsAndDatabaseDeleted(keyPath, deleteResult)
+	})
+
+}
+
+var selectQuery = "SELECT row_to_json(t) FROM (SELECT * FROM synced_secrets where secret_backend = '%s' AND secret_path = '%s' AND destination_cluster = '%s') t"
+
+func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabaseDeleted(keyPath string, result *SyncJobResult) {
+	// Verify DB: no rows for both replicas
+	for _, cluster := range []string{replica1Name, replica2Name} {
+		sql, err := suite.pgHelper.ExecutePsqlCommand(suite.ctx, fmt.Sprintf(selectQuery, teamAMount, keyPath, cluster))
+		suite.NoError(err)
+		if strings.TrimSpace(sql) != "" {
+			suite.Failf("db-not-empty", "expected no DB row for %s/%s (%s), got: %s", teamAMount, keyPath, cluster, sql)
+		}
+	}
+
+	// Verify Vault: secret is gone from both replicas
+	for i, helper := range []*testutil.VaultHelper{suite.vaultReplica1Helper, suite.vaultReplica2Helper} {
+		data, _, err := helper.ReadSecretData(suite.ctx, teamAMount, keyPath)
+		suite.Error(err, "expected read error for deleted secret on replica-%d", i)
+		suite.Nil(data, "expected no data on replica-%d", i)
+	}
+
+	// Optionally verify job result statuses are Deleted per replica
+	if result != nil && len(result.Status) >= 2 {
+		for i := 0; i < 2; i++ {
+			suite.Equal(fmt.Sprintf("replica-%d", i), result.Status[i].ClusterName)
+			suite.Equal(SyncJobStatusDeleted, result.Status[i].Status)
+		}
+	}
 }
 
 // Add this function to the test suite
