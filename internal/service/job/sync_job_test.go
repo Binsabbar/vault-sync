@@ -205,6 +205,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			suite.Contains(clusters, status.ClusterName)
 		}
 	})
+
+	// if the secret does not exist in the source initially, do not even check the DB. 
 }
 
 func (suite *SyncJobTestSuite) TestExecute_Failure() {

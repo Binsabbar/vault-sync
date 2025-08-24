@@ -37,87 +37,70 @@ func NewSyncJob(mount, keyPath string, vaultClient vault.VaultSyncer, dbClient r
 	}
 }
 
-const (
-	initialSourceVersion = 0
-)
-
 func (job *SyncJob) Execute(ctx context.Context) (*SyncJobResult, error) {
 	logger := job.logger.With().Str("action", "execute").Logger()
 	logger.Debug().Msg("Starting secret sync job")
 
-	syncedSecrets, secretNotFound, err := job.checkSyncedSecretInDatabaseInClusters()
+	replicas := job.vaultClient.GetReplicaNames()
+	replicasSyncedStatus, err := job.getSyncedStatusFromDatabase(replicas)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to check synced secret in database")
-		return nil, err
-	}
-
-	if secretNotFound {
-		logger.Debug().Msg("Secret does not exist in every cluster, syncing to all replicas")
-		return job.syncSecret(ctx)
+		return job.handleError(err, "Failed to check synced secret in database")
 	}
 
 	sourceSecretExists, err := job.vaultClient.SecretExists(ctx, job.mount, job.keyPath)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to check if secret exists in vault")
-		return nil, err
+		return job.handleError(err, "Failed to check if secret exists in vault")
 	}
 
-	if !sourceSecretExists {
-		logger.Debug().Msg("Secret does not exist in source, deleting from all replicas")
-		return job.deleteSecret(ctx)
-	}
+	allReplicasHaveSyncStatus := len(replicasSyncedStatus) == len(replicas)
+	someOrAllReplicasHaveSyncStatus := len(replicasSyncedStatus) > 0
 
-	secretMetadata, err := job.vaultClient.GetSecretMetadata(ctx, job.mount, job.keyPath)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get secret metadata from vault")
-		return nil, err
-	}
+	if sourceSecretExists {
+		if allReplicasHaveSyncStatus {
+			secretMetadata, err := job.vaultClient.GetSecretMetadata(ctx, job.mount, job.keyPath)
+			if err != nil {
+				return job.handleError(err, "Failed to get secret metadata from vault")
+			}
 
-	clusterStatus := make([]*ClusterSyncStatus, 0, len(syncedSecrets))
-	for _, syncedSecret := range syncedSecrets {
-		if syncedSecret.SourceVersion < secretMetadata.CurrentVersion {
-			logger.Debug().
-				Int64("source_version", secretMetadata.CurrentVersion).
-				Msg("Current source version is greater than DB version, syncing secret to all replicas")
-			return job.syncSecret(ctx)
+			if !job.doesSourceVersionMatchReplicas(secretMetadata.CurrentVersion, replicasSyncedStatus) {
+				return job.syncSecret(ctx)
+			}
+			return job.buildUnmodifiedResult(replicas), nil
 		}
-		clusterStatus = append(clusterStatus, &ClusterSyncStatus{
-			ClusterName: syncedSecret.DestinationCluster,
-			Status:      SyncJobStatusUnModified,
-		})
+		logger.Debug().Msg("Secret does not exist in every cluster, syncing to all replicas")
+		return job.syncSecret(ctx)
+	} else {
+		if someOrAllReplicasHaveSyncStatus {
+			logger.Debug().Msg("Secret does not exist in source, deleting from all replicas")
+			return job.deleteSecret(ctx)
+		}
+		logger.Info().Msg("No sync status exists and no source secret exists, no action needed (no-op)")
+		return NewSyncJobResult(job, []*ClusterSyncStatus{}, nil), nil
 	}
-
-	logger.Info().Msg("All synced secrets are up to date, no sync needed")
-	return NewSyncJobResult(job, clusterStatus, nil), nil
 }
 
-// checkSyncedSecretInDatabaseInClusters checks if the synced secret exists in the database for every cluster
-// returns the existing synced secrets and a boolean indicating if the secret was not found in any cluster.
-// note: if the secret is not found in any cluster, it will return a slice, which might contain all secrets currently in the database.
-func (job *SyncJob) checkSyncedSecretInDatabaseInClusters() ([]*models.SyncedSecret, bool, error) {
+// getSyncedStatusFromDatabase returns sync secret status from the databases for replicas
+// if the secret is not found for a cluster, the slice will miss that item.
+// always check the len of the return slice and compare it with the replicaClusters length
+// if error is raised, it is returned and slice is set to nil
+func (job *SyncJob) getSyncedStatusFromDatabase(replicaClusters []string) ([]*models.SyncedSecret, error) {
 	logger := job.logger.With().Str("action", "check_synced_secret_exists").Logger()
 	logger.Debug().Msg("Checking if synced secret exists in database")
 
-	clusters := job.vaultClient.GetReplicaNames()
-	secretNotFound := false
-	existingSecrets := make([]*models.SyncedSecret, 0, len(clusters))
-	for _, clusterName := range clusters {
-		syncedSecret, err := job.databaseClient.GetSyncedSecret(job.mount, job.keyPath, clusterName)
-
+	existingSyncStatus := make([]*models.SyncedSecret, 0, len(replicaClusters))
+	for _, clusterName := range replicaClusters {
+		syncedStatus, err := job.databaseClient.GetSyncedSecret(job.mount, job.keyPath, clusterName)
 		if err != nil && err == repository.ErrSecretNotFound {
 			logger.Debug().Str("cluster_name", clusterName).Msg("Secret not found in database, will sync to this cluster")
-			secretNotFound = true
-			break
 		} else if err != nil {
 			logger.Error().Str("cluster_name", clusterName).Err(err).Msg("Failed to get synced secret from database")
-			return nil, false, err
+			return nil, err
 		}
-
 		logger.Debug().Str("cluster_name", clusterName).Msg("Secret found in database")
-		existingSecrets = append(existingSecrets, syncedSecret)
+		existingSyncStatus = append(existingSyncStatus, syncedStatus)
 	}
 
-	return existingSecrets, secretNotFound, nil
+	return existingSyncStatus, nil
 }
 
 func (job *SyncJob) syncSecret(ctx context.Context) (*SyncJobResult, error) {
@@ -150,30 +133,72 @@ func (job *SyncJob) deleteSecret(ctx context.Context) (*SyncJobResult, error) {
 	logger := job.logger.With().Str("action", "delete_secret").Logger()
 	logger.Debug().Msg("Deleting secret from replicas")
 
-	deletedSecrets, err := job.vaultClient.DeleteSecretFromReplicas(ctx, job.mount, job.keyPath)
+	secretDeletionStatus, err := job.vaultClient.DeleteSecretFromReplicas(ctx, job.mount, job.keyPath)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to delete secret from replicas")
 		return nil, err
 	}
+	successDeletionStatus = 
 
-	clusterStatus := make([]*ClusterSyncStatus, 0, len(deletedSecrets))
-	for _, secret := range deletedSecrets {
-		status := &ClusterSyncStatus{ClusterName: secret.DestinationCluster, Status: mapFromSyncedSecretStatus(secret.Status)}
-		if secret.Status == models.StatusFailed {
+	clusterSyncStatus := make([]*ClusterSyncStatus, 0, len(secretDeletionStatus))
+
+	for _, deletionStatus := range secretDeletionStatus {
+		logger := logger.With().Str("cluster_name", deletionStatus.DestinationCluster).Logger()
+
+		status := &ClusterSyncStatus{ClusterName: deletionStatus.DestinationCluster, Status: mapFromSyncedSecretStatus(deletionStatus.Status)}
+		if status.Status == SyncJobStatusFailed {
 			status.Status = SyncJobStatusErrorDeleting
-			logger.Error().Str("cluster_name", secret.DestinationCluster).Msg("Failed to delete secret from replica cluster")
+			logger.Error().Err(err).Msg("Failed to delete secret from replica cluster")
 		}
-		logger.Debug().Str("cluster_name", secret.DestinationCluster).Msg("Update Database with deleted secret status")
-		err := job.databaseClient.DeleteSyncedSecret(secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
+		logger.Debug().Msg("Update Database with deleted secret status")
+		err := job.databaseClient.DeleteSyncedSecret(deletionStatus.SecretBackend, deletionStatus.SecretPath, deletionStatus.DestinationCluster)
 		if err != nil {
-			logger.Error().Str("cluster_name", secret.DestinationCluster).Err(err).Msg("Failed to delete synced secret from database")
+			logger.Error().Err(err).Msg("Failed to delete synced secret from database")
 			return nil, err
 		}
-		clusterStatus = append(clusterStatus, status)
+		clusterSyncStatus = append(clusterSyncStatus, status)
 	}
 
-	logger.Debug().Int("deleted_secrets_count", len(deletedSecrets)).Msg("Secrets deleted from replicas successfully")
-	return NewSyncJobResult(job, clusterStatus, nil), nil
+	logger.Debug().Int("deleted_secrets_count", len(secretDeletionStatus)).Msg("Secrets deleted from replicas successfully")
+	return NewSyncJobResult(job, clusterSyncStatus, nil), nil
+}
+
+// doesSourceVersionMatchReplicas compares source version with replica versions
+func (job *SyncJob) doesSourceVersionMatchReplicas(sourceVersion int64, replicasSyncedStatus []*models.SyncedSecret) bool {
+	logger := job.logger.With().Str("action", "does_source_version_match_replcas").Logger()
+
+	doesSourceVersionMatch := true
+	for _, syncStatus := range replicasSyncedStatus {
+		if syncStatus.SourceVersion != sourceVersion {
+			logger.Debug().
+				Int64("source_version", sourceVersion).
+				Int64("db_version", syncStatus.SourceVersion).
+				Str("cluster", syncStatus.DestinationCluster).
+				Msg("Current source version is greater than DB version")
+			doesSourceVersionMatch = false
+		}
+	}
+
+	return doesSourceVersionMatch
+}
+
+// handleError logs the error and returns nil result with the error
+func (job *SyncJob) handleError(err error, msg string) (*SyncJobResult, error) {
+	job.logger.Error().Err(err).Msg(msg)
+	return nil, err
+}
+
+// buildUnmodifiedResult creates a result with all replicas marked as unmodified
+func (job *SyncJob) buildUnmodifiedResult(clusters []string) *SyncJobResult {
+	clusterStatus := make([]*ClusterSyncStatus, 0, len(clusters))
+	for _, cluster := range clusters {
+		clusterStatus = append(clusterStatus, &ClusterSyncStatus{
+			ClusterName: cluster,
+			Status:      SyncJobStatusUnModified,
+		})
+	}
+	job.logger.Info().Msg("All replicas are up to date, no sync needed")
+	return NewSyncJobResult(job, clusterStatus, nil)
 }
 
 // ***************
@@ -203,7 +228,7 @@ func mapFromSyncedSecretStatus(status models.SyncStatus) SyncJobStatus {
 	case models.StatusPending:
 		return SyncJobStatusPending
 	default:
-		return SyncJobStatusUnknown
+		return SyncJobSitatusUnknown
 	}
 
 }
@@ -218,10 +243,6 @@ type SyncJobResult struct {
 type ClusterSyncStatus struct {
 	ClusterName string
 	Status      SyncJobStatus
-}
-
-type genericSyncedSecret interface {
-	*models.SyncedSecret | *models.SyncSecretDeletionResult
 }
 
 func NewSyncJobResult(job *SyncJob, status []*ClusterSyncStatus, err error) *SyncJobResult {
