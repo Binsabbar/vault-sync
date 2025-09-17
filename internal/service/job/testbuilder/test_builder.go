@@ -2,6 +2,7 @@ package testbuilder
 
 import (
 	"context"
+	"errors"
 	"vault-sync/internal/models"
 	"vault-sync/internal/repository"
 	"vault-sync/internal/vault"
@@ -96,7 +97,7 @@ func NewSyncJobMockBuilder() MockBuilderInit {
 		ctx:      context.Background(),
 		mount:    "test-mount",
 		keyPath:  "test/key/path",
-		clusters: make([]string, 2),
+		clusters: make([]string, 0),
 
 		mockRepo:              new(mockRepository),
 		secretVersion:         1,
@@ -127,7 +128,7 @@ func (b *SyncJobMockBuilder) WithKeyPath(keyPath string) MockBuilderInit {
 }
 
 func (b *SyncJobMockBuilder) WithClusters(clusters ...string) MockClustersStage {
-	b.clusters = clusters
+	b.clusters = append(b.clusters, clusters...)
 
 	for _, cluster := range clusters {
 		b.dbGetSecretsResult[cluster] = nil
@@ -187,6 +188,7 @@ func (b *SyncJobMockBuilder) WithUpdateSyncedSecretStatus(status models.SyncStat
 	}
 	return b
 }
+
 func (b *SyncJobMockBuilder) WithUpdateSyncedSecretStatusError(err error, clusters ...string) MockDatabaseStage {
 	for _, cluster := range clusters {
 		b.dbErrors[cluster][DBUpdateSyncedSecretStatus] = err
@@ -282,6 +284,9 @@ func (b *SyncJobMockBuilder) WithDeleteSecretFromReplicasError(err error) MockVa
 
 // MockBuildableStage interface implementation
 func (b *SyncJobMockBuilder) Build() (*mockRepository, *mockVaultClient) {
+	b.mockRepo = new(mockRepository)
+	b.mockVault = new(mockVaultClient)
+
 	b.mockVault.On("GetReplicaNames").Return(b.clusters)
 
 	// Setup database mocks for GetSyncedSecret
@@ -293,10 +298,29 @@ func (b *SyncJobMockBuilder) Build() (*mockRepository, *mockVaultClient) {
 		} else {
 			b.mockRepo.On("GetSyncedSecret", b.mount, b.keyPath, cluster).Return(nil, repository.ErrSecretNotFound)
 		}
+
+		if updateErr, hasError := b.dbErrors[cluster][DBUpdateSyncedSecretStatus]; hasError {
+			b.mockRepo.On("UpdateSyncedSecretStatus", mock.MatchedBy(func(methodArg *models.SyncedSecret) bool {
+				return methodArg.DestinationCluster == cluster
+			})).Return(updateErr)
+		} else if secret, hasSecret := b.dbUpdateSecretsResult[cluster]; hasSecret {
+			updateMatcher := mock.MatchedBy(func(methodArg *models.SyncedSecret) bool {
+				return methodArg.SecretBackend == secret.SecretBackend &&
+					methodArg.SecretPath == secret.SecretPath &&
+					methodArg.DestinationCluster == cluster &&
+					methodArg.Status == secret.Status &&
+					methodArg.SourceVersion == secret.SourceVersion
+			})
+			b.mockRepo.On("UpdateSyncedSecretStatus", updateMatcher).Return(nil)
+		}
+
+		if deleteErr, hasError := b.dbErrors[cluster][DBDeleteSyncedSecret]; hasError {
+			// error can be nil when WithDeleteSyncedSecret is used
+			b.mockRepo.On("DeleteSyncedSecret", b.mount, b.keyPath, cluster).Return(deleteErr)
+		}
 	}
 
-	// Setup vault SecretExists mock if specified
-
+	// Setup vault SecretExists mock
 	if vaultError, hasError := b.vaultErrors[VaultSecretExists]; hasError {
 		b.mockVault.On("SecretExists", mock.Anything, b.mount, b.keyPath).Return(false, vaultError)
 	} else if b.sourceSecretExists != nil {
@@ -305,48 +329,36 @@ func (b *SyncJobMockBuilder) Build() (*mockRepository, *mockVaultClient) {
 		b.mockVault.On("SecretExists", mock.Anything, b.mount, b.keyPath).Return(false, nil)
 	}
 
-	// Setup vault GetSecretMetadata mock if secret exists
+	// Setup vault GetSecretMetadata mock
 	if vaultError, hasError := b.vaultErrors[VaultGetSecretMetadata]; hasError {
 		b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(nil, vaultError)
 	} else {
-		metadata := &vault.VaultSecretMetadataResponse{CurrentVersion: b.sourceSecretVersion}
-		b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(metadata, nil)
+		if b.sourceSecretExists != nil {
+			if !*b.sourceSecretExists {
+				b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(nil, errors.New("secret not found"))
+			} else {
+				metadata := &vault.VaultSecretMetadataResponse{CurrentVersion: b.sourceSecretVersion}
+				b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(metadata, nil)
+			}
+		}
 	}
 
 	// setup vault SyncSecretToReplicas mock if secret exists
-	if vaultError, hasError := b.vaultErrors[VaultSyncSecretToReplicas]; hasError {
-		b.mockVault.On("SyncSecretToReplicas", mock.Anything, b.mount, b.keyPath).Return(nil, vaultError)
-	} else {
-		if b.vaultSyncResults == nil {
-			panic("Invoke WithSyncSecretToReplicas before Build")
-		}
-		b.mockVault.On("SyncSecretToReplicas", mock.Anything, b.mount, b.keyPath).Return(b.vaultSyncResults, nil)
-	}
-
-	// Setup update mocks for successful sync results
-	for _, result := range b.vaultSyncResults {
-		if updateError, hasError := b.dbErrors[result.DestinationCluster][DBUpdateSyncedSecretStatus]; hasError {
-			b.mockRepo.On("UpdateSyncedSecretStatus", result).Return(updateError)
+	if len(b.vaultSyncResults) > 0 || b.vaultErrors[VaultSyncSecretToReplicas] != nil {
+		if vaultError, hasError := b.vaultErrors[VaultSyncSecretToReplicas]; hasError {
+			b.mockVault.On("SyncSecretToReplicas", mock.Anything, b.mount, b.keyPath).Return(nil, vaultError)
 		} else {
-			b.mockRepo.On("UpdateSyncedSecretStatus", result).Return(nil)
+			b.mockVault.On("SyncSecretToReplicas", mock.Anything, b.mount, b.keyPath).Return(b.vaultSyncResults, nil)
 		}
+
 	}
 
-	if vaultError, hasError := b.vaultErrors[VaultDeleteSecretFromReplicas]; hasError {
-		b.mockVault.On("DeleteSecretFromReplicas", mock.Anything, b.mount, b.keyPath).Return(nil, vaultError)
-	} else {
-		if b.vaultDeleteResults == nil {
-			panic("Invoke WithDeleteSecretFromReplicas before Build")
-		}
-		b.mockVault.On("DeleteSecretFromReplicas", mock.Anything, b.mount, b.keyPath).Return(b.vaultDeleteResults, nil)
-	}
-
-	// Setup delete mocks for successful delete results
-	for _, result := range b.vaultDeleteResults {
-		if deleteError, hasError := b.dbErrors[result.DestinationCluster][DBDeleteSyncedSecret]; hasError {
-			b.mockRepo.On("DeleteSyncedSecret", b.mount, b.keyPath, result.DestinationCluster).Return(deleteError)
+	// Setup vault DeleteSecretFromReplicas mock
+	if len(b.vaultDeleteResults) > 0 || b.vaultErrors[VaultDeleteSecretFromReplicas] != nil {
+		if vaultError, hasError := b.vaultErrors[VaultDeleteSecretFromReplicas]; hasError {
+			b.mockVault.On("DeleteSecretFromReplicas", mock.Anything, b.mount, b.keyPath).Return(nil, vaultError)
 		} else {
-			b.mockRepo.On("DeleteSyncedSecret", b.mount, b.keyPath, result.DestinationCluster).Return(nil)
+			b.mockVault.On("DeleteSecretFromReplicas", mock.Anything, b.mount, b.keyPath).Return(b.vaultDeleteResults, nil)
 		}
 	}
 

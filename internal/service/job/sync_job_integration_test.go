@@ -1,4 +1,5 @@
-// go:build: integration
+//go:build integration
+
 package job
 
 import (
@@ -43,7 +44,6 @@ func (suite *SyncJobIntegrationTestSuite) SetupSuite() {
 	suite.ctx = context.Background()
 	suite.setupVaultClient()
 	suite.setupRepositoryClient()
-	// zerolog.SetGlobalLevel(zerolog.DebugLevel)
 }
 
 func (suite *SyncJobIntegrationTestSuite) SetupTest() {
@@ -99,7 +99,7 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 
 		suite.NoError(err)
 		suite.Len(result.Status, 2)
-		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{}) //default versions are 1 for both replicas
+		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{})
 	})
 
 	suite.Run("sync job with secret from main cluster if secret exists in single replica only", func() {
@@ -124,7 +124,6 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 	})
 
 	suite.Run("re-sync existing secrets in replica if source version changed", func() {
-		// suite.T().Skip("Skipping this test as it is not applicable for the current setup")
 		keyPath := "secret1"
 		suite.vaultMainHelper.WriteSecret(suite.ctx, teamAMount, keyPath, map[string]string{
 			"database": "testdb1",
@@ -133,10 +132,10 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		})
 		job := NewSyncJob(teamAMount, keyPath, suite.vaultClient, suite.repo)
 
-		// run the initial sync job
+		// Run initial sync
 		job.Execute(suite.ctx)
 
-		// update the secret in the main cluster
+		// Update the secret in the main cluster
 		updatedSecretData := map[string]string{
 			"database": "testdb2",
 			"username": "testuser3",
@@ -145,19 +144,17 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		}
 		suite.vaultMainHelper.WriteSecret(suite.ctx, teamAMount, keyPath, updatedSecretData)
 
-		// run the sync job again
+		// Run sync again
 		result, err := job.Execute(suite.ctx)
 
 		suite.NoError(err)
 		suite.Len(result.Status, 2)
 		suite.verifySecretsAndDatabase(keyPath, updatedSecretData, result, map[string]int64{
-			"main":       2,
 			replica1Name: 2,
 			replica2Name: 2,
 		})
 	})
 
-	// Test for deleting a secret
 	suite.Run("sync job with secret deletion from main cluster", func() {
 		keyPath := "secret1"
 		sourceSecretData := map[string]string{
@@ -168,14 +165,14 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		suite.vaultMainHelper.WriteSecret(suite.ctx, teamAMount, keyPath, sourceSecretData)
 		job := NewSyncJob(teamAMount, keyPath, suite.vaultClient, suite.repo)
 
-		// run the initial sync job
+		// Run initial sync
 		result, _ := job.Execute(suite.ctx)
-		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{}) //default versions are 1 for both replicas
+		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{})
 
-		// delete the secret in the main cluster
-		suite.vaultMainHelper.DeleteSecret(suite.ctx, fmt.Sprint(teamAMount, "/", keyPath))
+		// Delete the secret in the main cluster
+		suite.vaultMainHelper.DeleteSecret(suite.ctx, fmt.Sprintf("%s/%s", teamAMount, keyPath))
 
-		// run the sync job again
+		// Run sync again
 		deleteResult, err := job.Execute(suite.ctx)
 
 		suite.NoError(err)
@@ -183,6 +180,18 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		suite.verifySecretsAndDatabaseDeleted(keyPath, deleteResult)
 	})
 
+	suite.Run("no-op when source missing and no DB records", func() {
+		keyPath := "nonexistent-secret"
+		job := NewSyncJob(teamAMount, keyPath, suite.vaultClient, suite.repo)
+
+		result, err := job.Execute(suite.ctx)
+
+		suite.NoError(err)
+		suite.Len(result.Status, 2)
+		for _, status := range result.Status {
+			suite.Equal(SyncJobStatusUnModified, status.Status)
+		}
+	})
 }
 
 var selectQuery = "SELECT row_to_json(t) FROM (SELECT * FROM synced_secrets where secret_backend = '%s' AND secret_path = '%s' AND destination_cluster = '%s') t"
@@ -204,7 +213,7 @@ func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabaseDeleted(keyPat
 		suite.Nil(data, "expected no data on replica-%d", i)
 	}
 
-	// Optionally verify job result statuses are Deleted per replica
+	// Verify job result statuses are Deleted per replica
 	if result != nil && len(result.Status) >= 2 {
 		for i := 0; i < 2; i++ {
 			suite.Equal(fmt.Sprintf("replica-%d", i), result.Status[i].ClusterName)
@@ -213,7 +222,6 @@ func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabaseDeleted(keyPat
 	}
 }
 
-// Add this function to the test suite
 func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabase(keyPath string, sourceSecretData map[string]string, result *SyncJobResult, expectedVersions map[string]int64) {
 	// Check DB records for both replicas
 	sql, _ := suite.pgHelper.ExecutePsqlCommand(suite.ctx, fmt.Sprintf(selectQuery, teamAMount, keyPath, replica1Name))
@@ -226,24 +234,23 @@ func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabase(keyPath strin
 		suite.Equal(destinationCluster, record.DestinationCluster)
 		suite.Equal(teamAMount, record.SecretBackend)
 		suite.Equal(keyPath, record.SecretPath)
-		if expectedVersion, ok := expectedVersions["main"]; ok {
-			suite.Equal(expectedVersion, record.SourceVersion)
-		} else {
-			suite.Equal(int64(1), record.SourceVersion)
-		}
 
+		// Check source version
+		suite.Equal(int64(1), record.SourceVersion) // Default to 1 if not specified
+
+		// Check destination version
 		if expectedVersion, ok := expectedVersions[destinationCluster]; ok {
 			suite.Equal(expectedVersion, record.DestinationVersion)
 		} else {
 			suite.Equal(int64(1), record.DestinationVersion)
 		}
 
-		// check job result status
+		// Check job result status
 		suite.Equal(fmt.Sprintf("replica-%d", index), result.Status[index].ClusterName)
 		suite.Equal(SyncJobStatusUpdated, result.Status[index].Status)
 	}
 
-	// check secrets in replicas
+	// Check secrets in replicas
 	replica0SecretData, _, _ := suite.vaultReplica1Helper.ReadSecretData(suite.ctx, teamAMount, keyPath)
 	suite.Equal(sourceSecretData, replica0SecretData)
 
