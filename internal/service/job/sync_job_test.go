@@ -8,7 +8,7 @@ import (
 	"testing"
 	"vault-sync/internal/models"
 	"vault-sync/internal/repository"
-	"vault-sync/internal/service/job/testbuilder"
+	"vault-sync/testutil/testbuilder"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -56,7 +56,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			SwitchToVaultStage().
 			WithVaultSecretExists(true).
 			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -78,7 +79,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			SwitchToVaultStage().
 			WithVaultSecretExists(true).
 			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -100,7 +102,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			WithVaultSecretExists(true).
 			WithGetSecretMetadata(sourceVersion).
 			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -124,7 +127,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			WithVaultSecretExists(true).
 			WithGetSecretMetadata(sourceVersion).
 			WithSyncSecretToReplicas(models.StatusSuccess, sourceVersion, clusters...).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -144,7 +148,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			SwitchToVaultStage().
 			WithVaultSecretExists(true).
 			WithGetSecretMetadata(sourceVersion).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -165,7 +170,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			SwitchToVaultStage().
 			WithVaultSecretExists(false).
 			WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -188,7 +194,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			WithVaultSecretExists(false).
 			WithDeleteSecretFromReplicas(models.StatusDeleted, cluster1).
 			WithDeleteSecretFromReplicas(models.StatusFailed, cluster2).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -210,7 +217,8 @@ func (suite *SyncJobTestSuite) TestExecute_Success() {
 			WithGetSyncedSecretNotFound(clusters...).
 			SwitchToVaultStage().
 			WithVaultSecretExists(false).
-			Build()
+			SwitchToBuildableStage().Build()
+
 		worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 		jobResult, err := worker.Execute(suite.ctx)
@@ -230,7 +238,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithDatabaseSecretVersion(1).
 				WithGetSyncedSecret(cluster1).
 				WithGetSyncedSecretError(repository.ErrDatabaseGeneric, cluster2).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			_, err := worker.Execute(suite.ctx)
@@ -240,7 +249,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 		})
 
 		suite.Run("return error on getting synced secret when DB raises error for all clusters", func() {
-			mockRepo, mockVault := suite.builder.WithGetSyncedSecretError(repository.ErrDatabaseGeneric, clusters...).Build()
+			mockRepo, mockVault := suite.builder.WithGetSyncedSecretError(repository.ErrDatabaseGeneric, clusters...).SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			_, err := worker.Execute(suite.ctx)
@@ -258,7 +268,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithVaultSecretExists(true).
 				WithGetSecretMetadata(2).
 				WithSyncSecretToReplicas(models.StatusSuccess, 2, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			result, err := worker.Execute(suite.ctx)
@@ -283,7 +294,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(true).
 				WithSyncSecretToReplicas(models.StatusSuccess, 2, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			result, err := worker.Execute(suite.ctx)
@@ -305,7 +317,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			result, err := worker.Execute(suite.ctx)
@@ -321,7 +334,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicas(models.StatusDeleted, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			result, err := worker.Execute(suite.ctx)
@@ -339,7 +353,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(true).
 				WithSyncSecretToReplicasError(fmt.Errorf("failed to sync secret")).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			_, err := worker.Execute(suite.ctx)
@@ -359,7 +374,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithGetSecretMetadata(2).
 				WithSyncSecretToReplicas(models.StatusFailed, 1, cluster1).
 				WithSyncSecretToReplicas(models.StatusSuccess, 2, cluster2).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
@@ -386,7 +401,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithVaultSecretExists(true).
 				WithGetSecretMetadata(2).
 				WithSyncSecretToReplicas(models.StatusFailed, 1, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
@@ -405,7 +420,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithGetSyncedSecret(clusters...).
 				SwitchToVaultStage().
 				WithVaultSecretExistsError(fmt.Errorf("failed to check secret existence")).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			_, err := worker.Execute(suite.ctx)
@@ -421,7 +437,8 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(true).
 				WithGetSecretMetadataError(fmt.Errorf("failed to get secret metadata")).
-				Build()
+				SwitchToBuildableStage().Build()
+
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
 			_, err := worker.Execute(suite.ctx)
@@ -437,7 +454,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicasError(fmt.Errorf("failed to delete secret from replicas")).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
@@ -457,7 +474,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicas(models.StatusFailed, cluster1).
 				WithDeleteSecretFromReplicas(models.StatusDeleted, cluster2).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
@@ -482,7 +499,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicas(models.StatusFailed, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
@@ -503,7 +520,7 @@ func (suite *SyncJobTestSuite) TestExecute_Failure() {
 				SwitchToVaultStage().
 				WithVaultSecretExists(false).
 				WithDeleteSecretFromReplicas(models.StatusFailed, clusters...).
-				Build()
+				SwitchToBuildableStage().Build()
 
 			worker := NewSyncJob(suite.mount, suite.keyPath, mockVault, mockRepo)
 
