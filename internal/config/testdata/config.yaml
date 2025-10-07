@@ -21,6 +21,28 @@ sync_rule:
     - secret/data/test3
     - secret/data/test4
 
+# Pattern 1: Sync everything except specific paths
+# sync_rule:
+#   kv_mounts: ["team-a", "team-b"]
+#   paths_to_replicate: ["*"]  # Sync everything
+#   paths_to_ignore:
+#     - "*/data/temp/*"        # Except temp files
+#     - "*/data/secrets/dev/*" # Except dev secrets
+
+# Pattern 2: Sync only specific paths
+# sync_rule:
+#   kv_mounts: ["team-a", "team-b"]
+#   paths_to_replicate:
+#     - "*/data/production/*"  # Only production secrets
+#     - "*/data/staging/*"     # Only staging secrets
+#   paths_to_ignore:
+#     - "*/data/production/temp" # Except production temp
+
+# Pattern 3: Sync everything (no patterns specified)
+# sync_rule:
+#   kv_mounts: ["team-a", "team-b"]
+#   # No patterns = sync everything in these mounts
+
 postgres:
   # address is the address of the PostgreSQL database
   address: localhost
