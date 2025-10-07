@@ -6,6 +6,7 @@ package cmd
 import (
 	"os"
 	"strings"
+	"vault-sync/cmd/pathmatcher"
 	"vault-sync/cmd/sync"
 
 	"github.com/spf13/cobra"
@@ -48,4 +49,5 @@ func init() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	RootCmd.AddCommand(sync.SyncCmd)
+	RootCmd.AddCommand(pathmatcher.PathMatcherCmd)
 }
