@@ -463,6 +463,10 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 	var err error
 
 	for _, vaultHelper := range helpers {
+		if vaultHelper == nil {
+			errors <- nil
+			continue
+		}
 		go func(vaultHelper *VaultHelper) {
 			err := vaultHelper.Start(ctx)
 			if err != nil {
@@ -484,32 +488,41 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 
 	handleErrorsChan("SetupExistingClusters", errors, len(helpers))
 
-	mainConfig := &config.VaultClusterConfig{
-		Name:          mainCluster.Config.ClusterName,
-		Address:       mainCluster.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
+	mainConfig := (*config.VaultClusterConfig)(nil)
+	if mainCluster != nil {
+		mainConfig = &config.VaultClusterConfig{
+			Name:          mainCluster.Config.ClusterName,
+			Address:       mainCluster.Config.Address,
+			AppRoleMount:  "approle",
+			TLSSkipVerify: true,
+		}
+		mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(ctx, "main", mounts...)
+		checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
 	}
-	mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(ctx, "main", mounts...)
-	checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
 
-	replica1Config := &config.VaultClusterConfig{
-		Name:          replica1.Config.ClusterName,
-		Address:       replica1.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
+	replica1Config := (*config.VaultClusterConfig)(nil)
+	if replica1 != nil {
+		replica1Config = &config.VaultClusterConfig{
+			Name:          replica1.Config.ClusterName,
+			Address:       replica1.Config.Address,
+			AppRoleMount:  "approle",
+			TLSSkipVerify: true,
+		}
+		replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
+		checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
 	}
-	replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
-	checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
 
-	replica2Config := &config.VaultClusterConfig{
-		Name:          replica2.Config.ClusterName,
-		Address:       replica2.Config.Address,
-		AppRoleMount:  "approle",
-		TLSSkipVerify: true,
+	replica2Config := (*config.VaultClusterConfig)(nil)
+	if replica2 != nil {
+		replica2Config = &config.VaultClusterConfig{
+			Name:          replica2.Config.ClusterName,
+			Address:       replica2.Config.Address,
+			AppRoleMount:  "approle",
+			TLSSkipVerify: true,
+		}
+		replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
+		checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
 	}
-	replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
-	checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
 
 	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
 
@@ -517,18 +530,23 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 
 func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper) {
 	ctx := context.Background()
-	errors := make(chan error, 3)
+	helpers := []*VaultHelper{mainCluster, replica1, replica2}
+	errors := make(chan error, len(helpers))
 
-	go func() {
-		errors <- mainCluster.Terminate(ctx)
-	}()
-	go func() {
-		errors <- replica1.Terminate(ctx)
-	}()
-	go func() {
-		errors <- replica2.Terminate(ctx)
-	}()
-
+	for _, vaultHelper := range helpers {
+		if vaultHelper == nil {
+			errors <- nil
+			continue
+		} else {
+			go func(helper *VaultHelper) {
+				if mainCluster != nil {
+					errors <- helper.Terminate(ctx)
+				} else {
+					errors <- nil
+				}
+			}(vaultHelper)
+		}
+	}
 	handleErrorsChan("TerminateAllClusters", errors, 3)
 }
 
@@ -537,6 +555,10 @@ func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica
 	errors := make(chan error, 3)
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
 	for _, helper := range helpers {
+		if helper == nil {
+			errors <- nil
+			continue
+		}
 		go func(vaultHelper *VaultHelper) {
 			if err := vaultHelper.Start(ctx); err != nil {
 				errors <- fmt.Errorf("failed to start vault helper: %w", err)
@@ -554,6 +576,10 @@ func TruncateSecrets(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *
 	errors := make(chan error, 3)
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
 	for _, helper := range helpers {
+		if helper == nil {
+			errors <- nil
+			continue
+		}
 		go func(vaultHelper *VaultHelper) {
 			if err := vaultHelper.Start(ctx); err != nil {
 				errors <- fmt.Errorf("failed to start vault helper: %w", err)
