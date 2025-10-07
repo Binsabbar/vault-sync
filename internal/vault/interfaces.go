@@ -14,7 +14,7 @@ import (
 type VaultSyncer interface {
 	GetSecretMounts(ctx context.Context, secretPaths []string) ([]string, error)
 	GetSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error)
-	GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error)
+	GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error)
 	SecretExists(ctx context.Context, mount, keyPath string) (bool, error)
 	SyncSecretToReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncedSecret, error)
 	DeleteSecretFromReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncSecretDeletionResult, error)
