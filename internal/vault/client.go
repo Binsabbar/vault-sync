@@ -116,7 +116,7 @@ func (mc *MultiClusterVaultClient) GetSecretMetadata(ctx context.Context, mount,
 
 // GetKeysUnderMount retrieves all available keys (using path format) under a given mount from the main cluster.
 // This operation is only performed on the main cluster as it's used for discovery purposes.
-func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error) {
+func (mc *MultiClusterVaultClient) GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error) {
 	logger := mc.createOperationLogger("get_keys_under_mount", mount, "")
 	if mount == "" {
 		logger.Error().Msg("mount cannot be empty")
