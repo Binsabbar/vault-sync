@@ -176,7 +176,7 @@ func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[s
 }
 
 // fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
-func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error) {
+func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error) {
 	logger := cm.logger.With().
 		Str("action", "fetch_keys_under_mount").
 		Str("mount", mount).
@@ -204,7 +204,7 @@ func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string,
 }
 
 // listKeysRecursively recursively lists all keys under a path
-func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string, shouldIncludeKeyPath func(path string) bool) error {
+func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) error {
 	listPath := ""
 	if currentPath != "" {
 		listPath = currentPath
@@ -223,7 +223,7 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 	}
 
 	for _, key := range resp.Data.Keys {
-		keyPath := strings.TrimSuffix(key, mount)
+		keyPath := key
 		if currentPath != "" {
 			keyPath = fmt.Sprintf("%s/%s", currentPath, key)
 		}
@@ -231,15 +231,14 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 		// If key ends with '/', it's a directory - recurse into it
 		if strings.HasSuffix(key, "/") {
 			dirPath := strings.TrimSuffix(keyPath, "/")
-			if shouldIncludeKeyPath(dirPath) {
+			if shouldIncludeKeyPath(dirPath, false) {
 				err := cm.listKeysRecursively(ctx, mount, dirPath, allKeys, shouldIncludeKeyPath)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
-			if shouldIncludeKeyPath(keyPath) {
-				keyPath = strings.TrimPrefix(keyPath, mount+"/")
+			if shouldIncludeKeyPath(keyPath, true) {
 				*allKeys = append(*allKeys, keyPath)
 			}
 		}
@@ -343,7 +342,7 @@ func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string)
 
 // writeSecret writes secret data to the cluster and returns the new version
 func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string, data map[string]interface{}) (int64, error) {
-	logger := cm.logger.With().Str("action", "read_secret").
+	logger := cm.logger.With().Str("action", "write_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
 		Logger()

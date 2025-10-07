@@ -197,12 +197,12 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 			name:  "retrieve keys from mount with nested structure",
 			mount: "team-a",
 			setupSecrets: map[string]map[string]string{
-				"team-a/app1/database":                   {"host": "db1.example.com", "password": "secret1"},
-				"team-a/app1/api":                        {"key": "api-key-123"},
-				"team-a/app2/database":                   {"host": "db2.example.com", "password": "secret2"},
-				"team-a/shared/config":                   {"env": "production"},
-				"team-a/infrastructure/k8s":              {"cluster": "prod-cluster"},
-				"team-a/infrastructure/internal/grafana": {"username": "test-user"},
+				"app1/database":                   {"host": "db1.example.com", "password": "secret1"},
+				"app1/api":                        {"key": "api-key-123"},
+				"app2/database":                   {"host": "db2.example.com", "password": "secret2"},
+				"shared/config":                   {"env": "production"},
+				"infrastructure/k8s":              {"cluster": "prod-cluster"},
+				"infrastructure/internal/grafana": {"username": "test-user"},
 			},
 			expectedKeys: []string{
 				"app1/database",
@@ -218,9 +218,9 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 			name:  "retrieve keys from mount with single level",
 			mount: "team-b",
 			setupSecrets: map[string]map[string]string{
-				"team-b/database": {"host": "db.example.com"},
-				"team-b/api":      {"key": "api-key"},
-				"team-b/cache":    {"redis": "redis.example.com"},
+				"database": {"host": "db.example.com"},
+				"api":      {"key": "api-key"},
+				"cache":    {"redis": "redis.example.com"},
 			},
 			expectedKeys: []string{"database", "api", "cache"},
 			expectError:  false,
@@ -257,7 +257,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 				client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 				suite.NoError(err)
 
-				keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount, func(path string) bool {
+				keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount, func(path string, isFinalPath bool) bool {
 					return true
 				})
 
@@ -287,7 +287,123 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 		suite.NoError(err)
 
-		keys, err := client.GetKeysUnderMount(suite.ctx, mounts[0], func(path string) bool {
+		keys, err := client.GetKeysUnderMount(suite.ctx, mounts[0], func(path string, isFinalPath bool) bool {
+			fmt.Println("Checking path:", path)
+			return path != "production/infra/grafana" && path != "stage/app/app1"
+		})
+
+		suite.NoError(err)
+		suite.ElementsMatch([]string{"production/infra/argocd", "production/infra/thanos", "stage/app/app2"}, keys)
+	})
+}
+
+func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount2() {
+	type getKeysUnderMountTestCase struct {
+		name         string
+		mount        string
+		setupSecrets map[string]map[string]string // path -> secret data
+		expectedKeys []string
+		expectError  bool
+		errorMsg     string
+	}
+
+	testCases := []getKeysUnderMountTestCase{
+		{
+			name:  "retrieve keys from mount with nested structure",
+			mount: "team-a",
+			setupSecrets: map[string]map[string]string{
+				"app1/database":                   {"host": "db1.example.com", "password": "secret1"},
+				"app1/api":                        {"key": "api-key-123"},
+				"app2/database":                   {"host": "db2.example.com", "password": "secret2"},
+				"shared/config":                   {"env": "production"},
+				"infrastructure/k8s":              {"cluster": "prod-cluster"},
+				"infrastructure/internal/grafana": {"username": "test-user"},
+			},
+			expectedKeys: []string{
+				"app1/database",
+				"app1/api",
+				"app2/database",
+				"shared/config",
+				"infrastructure/k8s",
+				"infrastructure/internal/grafana",
+			},
+			expectError: false,
+		},
+		{
+			name:  "retrieve keys from mount with single level",
+			mount: "team-b",
+			setupSecrets: map[string]map[string]string{
+				"database": {"host": "db.example.com"},
+				"api":      {"key": "api-key"},
+				"cache":    {"redis": "redis.example.com"},
+			},
+			expectedKeys: []string{"database", "api", "cache"},
+			expectError:  false,
+		},
+		{
+			name:         "empty mount returns empty list",
+			mount:        "team-c",
+			setupSecrets: map[string]map[string]string{},
+			expectedKeys: []string{},
+			expectError:  false,
+		},
+		{
+			name:        "non-existent mount returns error",
+			mount:       "non-existent",
+			expectError: true,
+			errorMsg:    "failed to get keys under mount non-existent",
+		},
+		{
+			name:        "empty mount parameter returns error",
+			mount:       "",
+			expectError: true,
+			errorMsg:    "mount cannot be empty",
+		},
+	}
+
+	suite.Run("GetKeysUnderMount without filtering", func() {
+		for _, tc := range testCases {
+			suite.Run(tc.name, func() {
+				for secretPath, secretData := range tc.setupSecrets {
+					_, err := suite.mainVault.WriteSecret(suite.ctx, tc.mount, secretPath, secretData)
+					suite.NoError(err)
+				}
+
+				client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+				suite.NoError(err)
+
+				keys, err := client.GetKeysUnderMount(suite.ctx, tc.mount, func(path string, isFinalPath bool) bool {
+					return true
+				})
+
+				if tc.expectError {
+					suite.Error(err)
+					suite.ErrorContains(err, tc.errorMsg)
+				} else {
+					suite.NoError(err)
+					suite.ElementsMatch(tc.expectedKeys, keys)
+				}
+			})
+		}
+	})
+
+	suite.Run("GetKeysUnderMount with filtering", func() {
+		suite.T().Skip("Skipping due to debug prints in cluster manager")
+		for keypath, data := range map[string]map[string]string{
+			"production/infra/argocd":  {"key": "api-key-123"},
+			"production/infra/grafana": {"env": "production"},
+			"production/infra/thanos":  {"secret": "secret-key"},
+			"stage/app/app1":           {"db": "db-password"},
+			"stage/app/app2":           {"db": "db-password"},
+		} {
+			_, err := suite.mainVault.WriteSecret(suite.ctx, mounts[0], keypath, data)
+			suite.NoError(err)
+		}
+
+		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
+		suite.NoError(err)
+
+		keys, err := client.GetKeysUnderMount(suite.ctx, mounts[0], func(path string, isFinalPath bool) bool {
 			fmt.Println("Checking path:", path)
 			return path != "production/infra/grafana" && path != "stage/app/app1"
 		})
