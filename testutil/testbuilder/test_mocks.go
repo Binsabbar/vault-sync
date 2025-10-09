@@ -35,7 +35,7 @@ func (m *mockVaultClient) GetSecretMetadata(ctx context.Context, mount, keyPath 
 	return args.Get(0).(*vault.VaultSecretMetadataResponse), args.Error(1)
 }
 
-func (m *mockVaultClient) GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string) bool) ([]string, error) {
+func (m *mockVaultClient) GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error) {
 	args := m.Called(ctx, mount, shouldIncludeKeyPath)
 	return args.Get(0).([]string), args.Error(1)
 }
