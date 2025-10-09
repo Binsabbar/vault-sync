@@ -114,7 +114,9 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 // Container Operations
 func (v *VaultHelper) Terminate(ctx context.Context) error {
 	if v.container != nil {
-		return v.container.Terminate(ctx)
+		if v.container.IsRunning() {
+			return v.container.Terminate(ctx)
+		}
 	}
 	return nil
 }
@@ -332,7 +334,10 @@ func (v *VaultHelper) DeleteAllSecretsKVv2(ctx context.Context, mount, path stri
 			}
 		} else {
 			// Delete the secret
-			_, err := v.DeleteSecret(ctx, fmt.Sprintf("%s/%s", mount, path+key))
+			_, err := v.DeleteSecret(
+				ctx,
+				fmt.Sprintf("%s/%s/%s", strings.TrimSuffix(mount, "/"), path, key),
+			)
 			if err != nil {
 				return err
 			}
@@ -463,11 +468,11 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 	var err error
 
 	for _, vaultHelper := range helpers {
-		if vaultHelper == nil {
-			errors <- nil
-			continue
-		}
 		go func(vaultHelper *VaultHelper) {
+			if vaultHelper == nil {
+				errors <- nil
+				return
+			}
 			err := vaultHelper.Start(ctx)
 			if err != nil {
 				errors <- fmt.Errorf("failed to start vault helper: %w", err)
@@ -534,18 +539,14 @@ func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repli
 	errors := make(chan error, len(helpers))
 
 	for _, vaultHelper := range helpers {
-		if vaultHelper == nil {
-			errors <- nil
-			continue
-		} else {
-			go func(helper *VaultHelper) {
-				if mainCluster != nil {
-					errors <- helper.Terminate(ctx)
-				} else {
-					errors <- nil
-				}
-			}(vaultHelper)
-		}
+		go func(helper *VaultHelper) {
+			if helper == nil {
+				errors <- nil
+			} else {
+				errors <- helper.Terminate(ctx)
+			}
+		}(vaultHelper)
+
 	}
 	handleErrorsChan("TerminateAllClusters", errors, 3)
 }
@@ -555,11 +556,11 @@ func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica
 	errors := make(chan error, 3)
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
 	for _, helper := range helpers {
-		if helper == nil {
-			errors <- nil
-			continue
-		}
 		go func(vaultHelper *VaultHelper) {
+			if vaultHelper == nil {
+				errors <- nil
+				return
+			}
 			if err := vaultHelper.Start(ctx); err != nil {
 				errors <- fmt.Errorf("failed to start vault helper: %w", err)
 				return
@@ -576,11 +577,11 @@ func TruncateSecrets(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *
 	errors := make(chan error, 3)
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
 	for _, helper := range helpers {
-		if helper == nil {
-			errors <- nil
-			continue
-		}
 		go func(vaultHelper *VaultHelper) {
+			if vaultHelper == nil || !vaultHelper.container.IsRunning() {
+				errors <- nil
+				return
+			}
 			if err := vaultHelper.Start(ctx); err != nil {
 				errors <- fmt.Errorf("failed to start vault helper: %w", err)
 				return
