@@ -12,11 +12,12 @@ import (
 )
 
 type Config struct {
-	ID       string   `mapstructure:"id" validate:"required"`
-	SyncRule SyncRule `mapstructure:"sync_rule" validate:"required"`
-	LogLevel string   `mapstructure:"log_level" validate:"required,oneof=trace debug info warn error fatal panic"`
-	Postgres Postgres `mapstructure:"postgres" validate:"required"`
-	Vault    Vault    `mapstructure:"vault" validate:"required"`
+	ID          string   `mapstructure:"id" validate:"required"`
+	Concurrency int      `mapstructure:"concurrency" validate:"omitempty,gt=0,lt=101"`
+	SyncRule    SyncRule `mapstructure:"sync_rule" validate:"required"`
+	LogLevel    string   `mapstructure:"log_level" validate:"required,oneof=trace debug info warn error fatal panic"`
+	Postgres    Postgres `mapstructure:"postgres" validate:"required"`
+	Vault       Vault    `mapstructure:"vault" validate:"required"`
 }
 
 type Postgres struct {
