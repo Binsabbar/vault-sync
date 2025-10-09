@@ -20,8 +20,9 @@ type invalidConfigTestTable struct {
 type configFields map[string]interface{}
 
 var validAppConfig = configFields{
-	"id":        "test",
-	"log_level": "info",
+	"id":          "test",
+	"log_level":   "info",
+	"concurrency": 5,
 
 	"sync_rule.interval":           "60s",
 	"sync_rule.kv_mounts":          []string{"kv"},
@@ -64,6 +65,7 @@ func TestConfigLoadFromYAML(t *testing.T) {
 
 	require.Equal(t, "test", cfg.ID)
 	require.Equal(t, "info", cfg.LogLevel)
+	require.Equal(t, 5, cfg.Concurrency)
 
 	require.Equal(t, time.Duration(60*time.Second), cfg.SyncRule.GetInterval())
 	require.Equal(t, []string{"secret", "secret2"}, cfg.SyncRule.KvMounts)
@@ -144,6 +146,24 @@ func TestConfigurationValidation(t *testing.T) {
 				name:        "invalid log_level value",
 				setFields:   updateAndReturnMap(validAppConfig, "log_level", "invalid"),
 				errContains: "Config.LogLevel must be one of [trace debug info warn error fatal panic]",
+			},
+
+			{
+				name:        "invalid concurrency value",
+				setFields:   updateAndReturnMap(validAppConfig, "concurrency", -1),
+				errContains: "Config.Concurrency must be greater than 0",
+			},
+
+			{
+				name:        "max concurrency value",
+				setFields:   updateAndReturnMap(validAppConfig, "concurrency", 101),
+				errContains: "Config.Concurrency must be less than 101",
+			},
+
+			{
+				name:        "invalid concurrency value",
+				setFields:   updateAndReturnMap(validAppConfig, "concurrency", -1),
+				errContains: "Config.Concurrency must be greater than 0",
 			},
 
 			// sync rule level
