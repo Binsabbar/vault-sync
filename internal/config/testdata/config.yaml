@@ -3,6 +3,8 @@ id: test
 
 log_level: info
 
+concurrency: 5
+
 sync_rule:
   # interval is the period for syncing secrets, postfix the time unit (s, m, h)
   #  minimum is 60s
