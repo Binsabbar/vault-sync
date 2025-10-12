@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"vault-sync/pkg/log"
+
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 )
@@ -121,14 +123,18 @@ func syncRuleValidation(sl validator.StructLevel) {
 }
 
 func NewConfig() (*Config, error) {
+	logger := log.Logger.With().Str("component", "config").Logger()
 	var cfg Config
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("postgres.ssl_mode", "disable")
 	viper.SetDefault("vault.main_cluster.app_role_mount", "approle")
 
 	if err := viper.Unmarshal(&cfg); err != nil {
+		logger.Err(err).Msg("Failed to unmarshal config")
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
+
+	logger.Info().Msg("Configuration loaded successfully")
 
 	for index, r := range cfg.Vault.ReplicaClusters {
 		if r.AppRoleMount == "" {
@@ -138,6 +144,7 @@ func NewConfig() (*Config, error) {
 	}
 
 	if err := validateConfig(cfg); err != nil {
+		logger.Err(err).Msg("Failed to validate config")
 		return nil, err
 	}
 
