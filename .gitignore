@@ -39,3 +39,5 @@ coverage.*
 
 # Ignore user-specific config
 *.user
+
+vault-keys.txt
