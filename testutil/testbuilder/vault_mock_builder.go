@@ -11,6 +11,7 @@ import (
 
 const (
 	VaultSecretExists             = "SecretExists"
+	VaultReplicaSecretExists      = "ReplicaSecretExists"
 	VaultGetSecretMetadata        = "GetSecretMetadata"
 	VaultSyncSecretToReplicas     = "SyncSecretToReplicas"
 	VaultDeleteSecretFromReplicas = "DeleteSecretFromReplicas"
@@ -25,6 +26,7 @@ type VaultMockBuilder struct {
 
 	mockVault           *mockVaultClient
 	sourceSecretExists  *bool
+	replicaSecretExists map[string]*bool
 	sourceSecretVersion int64
 	vaultSyncResults    []*models.SyncedSecret
 	vaultDeleteResults  []*models.SyncSecretDeletionResult
@@ -43,6 +45,7 @@ func NewVaultMockBuilder(mount, keyPath string, clusters ...string) *VaultMockBu
 		mockVault:           new(mockVaultClient),
 		sourceSecretVersion: 1,
 		sourceSecretExists:  nil,
+		replicaSecretExists: make(map[string]*bool),
 
 		vaultSyncResults:    make([]*models.SyncedSecret, 0),
 		vaultDeleteResults:  make([]*models.SyncSecretDeletionResult, 0),
@@ -64,6 +67,10 @@ func (b *VaultMockBuilder) WithMount(mount string) *VaultMockBuilder {
 
 func (b *VaultMockBuilder) WithClusters(clusters ...string) *VaultMockBuilder {
 	b.clusters = clusters
+	for _, cluster := range clusters {
+		b.replicaSecretExists[cluster] = nil
+	}
+
 	return b
 }
 
@@ -84,6 +91,18 @@ func (b *VaultMockBuilder) WithVaultSecretExists(exists bool) *VaultMockBuilder 
 
 func (b *VaultMockBuilder) WithVaultSecretExistsError(err error) *VaultMockBuilder {
 	b.vaultErrors[VaultSecretExists] = err
+	return b
+}
+
+func (b *VaultMockBuilder) WithVaultSecretExistsInReplicas(exists bool, cluster ...string) *VaultMockBuilder {
+	for _, c := range cluster {
+		b.replicaSecretExists[c] = &exists
+	}
+	return b
+}
+
+func (b *VaultMockBuilder) WithVaultSecretExistsInReplicasError(err error) *VaultMockBuilder {
+	b.vaultErrors[VaultReplicaSecretExists] = err
 	return b
 }
 
@@ -160,6 +179,19 @@ func (b *VaultMockBuilder) Build() *mockVaultClient {
 		b.mockVault.On("SecretExists", mock.Anything, b.mount, b.keyPath).Return(*b.sourceSecretExists, nil)
 	} else {
 		b.mockVault.On("SecretExists", mock.Anything, b.mount, b.keyPath).Return(false, nil)
+	}
+
+	// Setup vault SecretExists mock
+	if vaultError, hasError := b.vaultErrors[VaultReplicaSecretExists]; hasError {
+		b.mockVault.On("SecretExistsInReplica", mock.Anything, mock.Anything, b.mount, b.keyPath).Return(false, vaultError)
+	} else {
+		for cluster, exists := range b.replicaSecretExists {
+			if exists != nil {
+				b.mockVault.On("SecretExistsInReplica", mock.Anything, cluster, b.mount, b.keyPath).Return(*exists, nil)
+			} else {
+				b.mockVault.On("SecretExistsInReplica", mock.Anything, cluster, b.mount, b.keyPath).Return(false, nil)
+			}
+		}
 	}
 
 	// Setup vault GetKeysUnderMount mock
