@@ -16,6 +16,7 @@ type VaultSyncer interface {
 	GetSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error)
 	GetKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error)
 	SecretExists(ctx context.Context, mount, keyPath string) (bool, error)
+	SecretExistsInReplica(ctx context.Context, clusterName, mount, path string) (bool, error)
 	SyncSecretToReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncedSecret, error)
 	DeleteSecretFromReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncSecretDeletionResult, error)
 	GetReplicaNames() []string

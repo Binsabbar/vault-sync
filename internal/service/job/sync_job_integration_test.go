@@ -155,6 +155,35 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		})
 	})
 
+	suite.Run("re-sync secret when manually deleted from replica", func() {
+		keyPath := "secret1"
+		sourceSecretData := map[string]string{
+			"database": "testdb",
+			"username": "testuser",
+			"password": "testpass",
+		}
+		suite.vaultMainHelper.WriteSecret(suite.ctx, teamAMount, keyPath, sourceSecretData)
+		job := NewSyncJob(teamAMount, keyPath, suite.vaultClient, suite.repo)
+
+		// Run initial sync
+		result, err := job.Execute(suite.ctx)
+		suite.NoError(err)
+		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, result, map[string]int64{})
+
+		// Manually delete secret from replica-1 (DB record remains)
+		suite.vaultReplica2Helper.DeleteSecret(suite.ctx, fmt.Sprintf("%s/%s", teamAMount, keyPath))
+
+		// Re-sync should restore the deleted secret
+		resyncResult, err := job.Execute(suite.ctx)
+
+		suite.NoError(err)
+		suite.Len(resyncResult.Status, 2)
+		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, resyncResult, map[string]int64{
+			replica1Name: 1,
+			replica2Name: 1,
+		})
+	})
+
 	suite.Run("sync job with secret deletion from main cluster", func() {
 		keyPath := "secret1"
 		sourceSecretData := map[string]string{

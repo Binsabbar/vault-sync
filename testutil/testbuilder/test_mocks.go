@@ -45,6 +45,11 @@ func (m *mockVaultClient) SecretExists(ctx context.Context, mount, keyPath strin
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockVaultClient) SecretExistsInReplica(ctx context.Context, cluster, mount, keyPath string) (bool, error) {
+	args := m.Called(ctx, cluster, mount, keyPath)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockVaultClient) SyncSecretToReplicas(ctx context.Context, mount, keyPath string) ([]*models.SyncedSecret, error) {
 	args := m.Called(ctx, mount, keyPath)
 	if args.Get(0) == nil {
