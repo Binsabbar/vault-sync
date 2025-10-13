@@ -76,11 +76,13 @@ type SyncState struct {
 	SourceExists     bool
 	SourceVersion    int64
 	RecordsByCluster map[string]*models.SyncedSecret
+	ReplicaExistence map[string]bool
 }
 
 func (job *SyncJob) gatherCurrentState(ctx context.Context) (*SyncState, error) {
 	state := &SyncState{
 		RecordsByCluster: make(map[string]*models.SyncedSecret),
+		ReplicaExistence: make(map[string]bool),
 	}
 
 	state.ReplicaNames = job.vaultClient.GetReplicaNames()
@@ -104,9 +106,42 @@ func (job *SyncJob) gatherCurrentState(ctx context.Context) (*SyncState, error) 
 			return nil, fmt.Errorf("failed to get source metadata: %w", err)
 		}
 		state.SourceVersion = metadata.CurrentVersion
+
+		replicaExistence, err := job.checkReplicaExistence(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check replica existence: %w", err)
+		}
+		state.ReplicaExistence = replicaExistence
 	}
 
 	return state, nil
+}
+
+func (job *SyncJob) checkReplicaExistence(ctx context.Context) (map[string]bool, error) {
+	logger := job.logger.With().Str("action", "check_replica_existence").Logger()
+
+	existence := make(map[string]bool)
+	replicaNames := job.vaultClient.GetReplicaNames()
+
+	for _, clusterName := range replicaNames {
+		exists, err := job.vaultClient.SecretExistsInReplica(ctx, clusterName, job.mount, job.keyPath)
+		if err != nil {
+			logger.Warn().
+				Str("cluster", clusterName).
+				Err(err).
+				Msg("Failed to check secret existence in replica")
+			existence[clusterName] = false
+			continue
+		}
+		existence[clusterName] = exists
+
+		logger.Debug().
+			Str("cluster", clusterName).
+			Bool("exists", exists).
+			Msg("Checked replica secret existence")
+	}
+
+	return existence, nil
 }
 
 func (job *SyncJob) getDBRecords(replicaNames []string) (map[string]*models.SyncedSecret, error) {
@@ -147,13 +182,27 @@ func (job *SyncJob) makeDecision(state *SyncState) SyncDecision {
 
 	case state.SourceExists && allReplicasHaveRecords:
 		// Source exists, all records exist → check versions
-		for _, record := range state.RecordsByCluster {
+		needsSync := false
+		for clusterName, record := range state.RecordsByCluster {
+			// Check if version is outdated
 			if record.SourceVersion < state.SourceVersion {
-				return DecisionSync
+				needsSync = true
+				break
+			}
+
+			// Check if secret actually exists in replica vault
+			if exists, ok := state.ReplicaExistence[clusterName]; ok && !exists {
+				job.logger.Debug().
+					Str("cluster", clusterName).
+					Msg("DB record exists but secret missing from replica - needs sync")
+				needsSync = true
+				break
 			}
 		}
+		if needsSync {
+			return DecisionSync
+		}
 		return DecisionNoOp
-
 	default:
 		return DecisionNoOp
 	}

@@ -41,6 +41,8 @@ type (
 	MockVaultStage interface {
 		WithVaultSecretExists(exists bool) MockVaultStage
 		WithVaultSecretExistsError(err error) MockVaultStage
+		WithVaultSecretExistsInReplicas(exists bool, clusters ...string) MockVaultStage
+		WithVaultSecretExistsInReplicasError(err error) MockVaultStage
 		WithGetSecretMetadata(version int64) MockVaultStage
 		WithGetSecretMetadataError(err error) MockVaultStage
 		WithSyncSecretToReplicas(status models.SyncStatus, version int64, clusters ...string) MockVaultStage
@@ -207,6 +209,16 @@ func (b *syncJobMockBuilder) WithVaultSecretExists(exists bool) MockVaultStage {
 
 func (b *syncJobMockBuilder) WithVaultSecretExistsError(err error) MockVaultStage {
 	b.vaultMockBuilder.WithVaultSecretExistsError(err)
+	return b
+}
+
+func (b *syncJobMockBuilder) WithVaultSecretExistsInReplicas(exists bool, cluster ...string) MockVaultStage {
+	b.vaultMockBuilder.WithVaultSecretExistsInReplicas(exists, cluster...)
+	return b
+}
+
+func (b *syncJobMockBuilder) WithVaultSecretExistsInReplicasError(err error) MockVaultStage {
+	b.vaultMockBuilder.WithVaultSecretExistsInReplicasError(err)
 	return b
 }
 
