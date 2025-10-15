@@ -1,5 +1,5 @@
 # Start with the official Go image for building the application
-FROM golang:1.24 as builder
+FROM golang:1.25 as builder
 
 # Set the working directory inside the container
 WORKDIR /app/vault-sync
@@ -16,6 +16,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o vault-sync
 FROM debian:stable-slim
 
 # Set the working directory inside the container
+
+# upgrade and update the system
+RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# create a non-root user and switch to it
+RUN useradd -m vaultsyncuser
+USER vaultsyncuser
 WORKDIR /app/vault-sync
 
 # Copy the built binary from the builder stage
