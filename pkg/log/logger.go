@@ -33,7 +33,6 @@ func Init(app_id string, levelStr string) {
 	zerolog.SetGlobalLevel(logLevel)
 
 	Logger = zerolog.New(os.Stdout).With().Timestamp().Str("service", "vault-sync").Str("app_id", app_id).Logger()
-	Logger.Info().Str("log_level", logLevel.String()).Msg("Logger initialized")
 }
 
 func init() {

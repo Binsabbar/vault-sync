@@ -1,38 +1,121 @@
 package pathmatcher
 
 import (
-	"fmt"
+	"bufio"
+	"os"
+	"strings"
+
+	"vault-sync/internal/config"
+	"vault-sync/internal/service/pathmatching"
+	"vault-sync/pkg/log"
 
 	"github.com/spf13/cobra"
 )
 
+var pathsFile string
+
+var logger = log.Logger.With().Str("component", "path-matcher").Logger()
+
 var PathMatcherCmd = &cobra.Command{
-	Use:     "path-matcher",
-	Short:   "start the path matching process",
-	Long:    `it will start the path matching process`,
-	Example: `vault-sync path-matcher --config /path/to/config.yaml`,
-	Run:     run,
+	Use:   "path-matcher",
+	Short: "Test path matching patterns against a list of paths",
+	Long: `Test your sync rules against a list of paths to see which ones would be synced.
+    
+The paths file should contain one path per line in the format: mount/path/to/secret
+For example:
+  production/app/database/password
+  uat/api/keys/jwt
+  stage/infra/certificates/ssl`,
+	Run: runPathMatcher,
 }
 
-func run(cmd *cobra.Command, args []string) {
-	// add option to check paths in a given file or from argument
-	// add option to check paths directly from Vault instance using config
-	// output should be in json format containing pathsToSync and PathsToIgnore root objects, and values as arrays of strings
-	// the mount also must be included
-	// Example:
-	// [
-	// 	{
-	//    "mount": "secret"
-	//    "pathsToSync": [
-	//        "secret/data/team-a/app/config",
-	//        "secret/data/team-b/app/config"
-	//    ],
-	//    "pathsToIgnore": [
-	//        "secret/data/team-a/app/ignore",
-	//        "secret/data/team-b/app/ignore"
-	//    ],
-	// 	}
-	// ]
+func init() {
+	PathMatcherCmd.Flags().StringVarP(&pathsFile, "paths-file", "f", "", "File containing paths to test (one per line)")
+	PathMatcherCmd.MarkFlagRequired("paths-file")
+}
 
-	fmt.Println("path-matcher called")
+func runPathMatcher(cmd *cobra.Command, args []string) {
+	cfg, err := config.NewConfig()
+
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to load config")
+		os.Exit(-1)
+	}
+
+	matcher := pathmatching.NewCorePathMatcher(&cfg.SyncRule)
+
+	// Read paths from file or stdin
+	var paths []string
+	paths, err = readPathsFromFile(pathsFile)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to read paths file")
+		os.Exit(-1)
+	}
+
+	if len(paths) == 0 {
+		logger.Warn().Msg("No paths provided. Use --paths-file or pipe paths to stdin.")
+		return
+	}
+
+	logger.Info().Int("path_count", len(paths)).Msg("Testing paths against sync rules")
+
+	matched := 0
+	ignored := 0
+
+	for _, fullPath := range paths {
+		fullPath = strings.TrimSpace(fullPath)
+		if fullPath == "" {
+			continue
+		}
+
+		parts := strings.SplitN(fullPath, "/", 2)
+		if len(parts) != 2 {
+			logger.Warn().Msgf("❌ INVALID (format should be mount/path): %s", fullPath)
+			continue
+		}
+
+		mount := parts[0]
+		keyPath := parts[1]
+
+		shouldSync := matcher.ShouldSync(mount, keyPath)
+
+		if shouldSync {
+			logger.Info().Msgf("✅ MATCH:   %s", fullPath)
+			matched++
+		} else {
+			logger.Info().Msgf("❌ IGNORE:  %s", fullPath)
+			ignored++
+		}
+	}
+
+	logger.Info().
+		Int("matched", matched).
+		Int("ignored", ignored).
+		Int("total", matched+ignored).
+		Msg("Process is completed")
+}
+
+func readPathsFromFile(filename string) ([]string, error) {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		logger.Error().Err(err).Str("file_name", filename).Msg("file does not exist")
+		return nil, err
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		logger.Error().Err(err).Str("file_name", filename).Msg("failed to open file")
+		return nil, err
+	}
+	defer file.Close()
+
+	var paths []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			paths = append(paths, line)
+		}
+	}
+
+	return paths, scanner.Err()
 }

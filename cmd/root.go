@@ -71,5 +71,7 @@ func initConfig() {
 
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Error().Err(err).Msg("Error loading config")
+		os.Exit(-1)
+		return
 	}
 }
