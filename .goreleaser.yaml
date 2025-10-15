@@ -1,13 +1,13 @@
 version: 2
 
-env:
-  - GO111MODULE=on
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - main: ./main.go
+  - id: vault-sync
+    main: ./main.go
+    binary: vault-sync
     env:
       - CGO_ENABLED=0
     goos:
@@ -16,16 +16,42 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+
 archives:
-  - formats: [ 'tar.gz' ]
+  - id: vault-sync
+    format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
 
 checksum:
   name_template: "checksums.txt"
 
 changelog:
   use: github
+  sort: asc
+
+dockers:
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/amd64"
 
 release:
-  prerelease: auto
   draft: false
+  prerelease: auto
