@@ -76,14 +76,15 @@ func (w *Wiring) InitVaultClient(ctx context.Context) vault.VaultSyncer {
 	return instance
 }
 
-func (w *Wiring) InitPathMatcher(vaultClient vault.VaultSyncer) *pathmatching.VaultPathMatcher {
+func (w *Wiring) InitPathMatcher() *pathmatching.VaultPathMatcher {
+	vaultClient := w.InitVaultClient(context.Background())
 	return pathmatching.NewVaultPathMatcher(vaultClient, &w.config.SyncRule)
 }
 
 func (w *Wiring) InitOrchestrator(ctx context.Context) *orchestrator.SyncOrchestrator {
 	vaultClient := w.InitVaultClient(ctx)
 	dbClient := w.InitSyncedSecretRepository()
-	pathMatcher := w.InitPathMatcher(vaultClient)
+	pathMatcher := w.InitPathMatcher()
 
 	return orchestrator.NewSyncOrchestrator(
 		vaultClient,
