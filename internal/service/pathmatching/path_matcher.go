@@ -39,6 +39,7 @@ type PathMatcher interface {
 type VaultPathMatcher struct {
 	vaultClient vault.VaultSyncer
 	syncRule    *config.SyncRule
+	cpm         *CorePathMatcher
 	logger      zerolog.Logger
 }
 
@@ -46,6 +47,7 @@ func NewVaultPathMatcher(vaultClient vault.VaultSyncer, syncRule *config.SyncRul
 	return &VaultPathMatcher{
 		vaultClient: vaultClient,
 		syncRule:    syncRule,
+		cpm:         NewCorePathMatcher(syncRule),
 		logger: log.Logger.With().
 			Str("component", "path_matcher").
 			Logger(),
@@ -104,28 +106,7 @@ func (pm *VaultPathMatcher) DiscoverFromMounts(ctx context.Context, mounts []str
 }
 
 func (pm *VaultPathMatcher) ShouldSync(mount, keyPath string) bool {
-	if !pm.isMountAllowed(mount) {
-		return false
-	}
-
-	if len(pm.syncRule.PathsToIgnore) > 0 {
-		for _, ignorePattern := range pm.syncRule.PathsToIgnore {
-			if pm.matchesGlobPattern(ignorePattern, keyPath) {
-				return false
-			}
-		}
-	}
-
-	if len(pm.syncRule.PathsToReplicate) > 0 {
-		for _, replicatePattern := range pm.syncRule.PathsToReplicate {
-			if pm.matchesGlobPattern(replicatePattern, keyPath) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return true
+	return pm.cpm.ShouldSync(mount, keyPath)
 }
 
 func (pm *VaultPathMatcher) isMountAllowed(mount string) bool {
@@ -192,7 +173,7 @@ func (pm *VaultPathMatcher) shouldTraverseIntoPath(keyPath string) bool {
 
 	// Then check if this path or its children could match replicate patterns
 	for _, replicatePattern := range pm.syncRule.PathsToReplicate {
-		if pm.matchesGlobPattern(replicatePattern, keyPath) {
+		if pm.cpm.matchesGlobPattern(replicatePattern, keyPath) {
 			return true
 		}
 
@@ -210,7 +191,7 @@ func (pm *VaultPathMatcher) isPathBranchCompletelyIgnored(keyPath string) bool {
 	}
 
 	for _, pattern := range pm.syncRule.PathsToIgnore {
-		if pm.matchesGlobPattern(pattern, keyPath) {
+		if pm.cpm.matchesGlobPattern(pattern, keyPath) {
 			return true
 		}
 
@@ -231,7 +212,7 @@ func (pm *VaultPathMatcher) isAtIgnorePrefix(ignorePattern, keytPath string) boo
 	for _, suffix := range []string{"/*", "/**"} {
 		if strings.HasSuffix(ignorePattern, suffix) {
 			ignorePatternPrefix := strings.TrimSuffix(ignorePattern, suffix)
-			matched := pm.matchesGlobPattern(ignorePatternPrefix, keytPath)
+			matched := pm.cpm.matchesGlobPattern(ignorePatternPrefix, keytPath)
 			if matched {
 				return true
 			}
@@ -275,25 +256,11 @@ func (pm *VaultPathMatcher) couldPathLeadToPattern(pattern, keyPath string) bool
 	}
 
 	for i, currentPart := range keyPathParts {
-		matched := pm.matchesGlobPattern(patternParts[i], currentPart)
+		matched := pm.cpm.matchesGlobPattern(patternParts[i], currentPart)
 		if !matched {
 			return false
 		}
 	}
 
 	return true
-}
-
-func (pm *VaultPathMatcher) matchesGlobPattern(pattern, vaultPath string) bool {
-	matched, err := doublestar.Match(pattern, vaultPath)
-	if err != nil {
-		pm.logger.Debug().
-			Str("pattern", pattern).
-			Str("path", vaultPath).
-			Err(err).
-			Msg("Invalid glob pattern")
-		return false
-	}
-
-	return matched
 }
