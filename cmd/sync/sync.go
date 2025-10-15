@@ -1,9 +1,9 @@
 package sync
 
 import (
-	"fmt"
 	"vault-sync/internal/config"
 	"vault-sync/internal/core"
+	"vault-sync/pkg/log"
 
 	"github.com/spf13/cobra"
 )
@@ -17,10 +17,12 @@ var SyncCmd = &cobra.Command{
 }
 
 func run(cmd *cobra.Command, args []string) {
+	logger := log.Logger.With().Str("component", "sync-cmd").Logger()
+	logger.Info().Msg("Starting vault-sync")
 
 	appConfig, err := config.NewConfig()
 	if err != nil {
-		fmt.Printf("Error creating config: %v\n", err)
+		logger.Error().Err(err).Msg("Error creating config")
 		return
 	}
 
@@ -29,8 +31,8 @@ func run(cmd *cobra.Command, args []string) {
 	orchestrator := wiring.InitOrchestrator(ctx)
 	_, err = orchestrator.StartSync(ctx)
 	if err != nil {
-		fmt.Printf("Error during sync: %v\n", err)
+		logger.Error().Err(err).Msg("Error during sync")
 		return
 	}
-	fmt.Println("Sync process completed successfully")
+	logger.Info().Msg("Sync process completed successfully")
 }

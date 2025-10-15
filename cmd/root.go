@@ -6,6 +6,7 @@ import (
 	"vault-sync/cmd/configprint"
 	"vault-sync/cmd/pathmatcher"
 	"vault-sync/cmd/sync"
+	"vault-sync/cmd/version"
 	"vault-sync/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -20,9 +21,10 @@ const (
 
 var RootCmd = &cobra.Command{
 	Use:   "vault-sync",
-	Short: "Vault Sync will sync two Vault instances together",
-	Long: `Vault Sync is a tool that will sync Vault secrets from one instance to multiple other instances.
-It is useful for keeping secrets in sync across multiple regions, such as main site and disater recovery site.`,
+	Short: "Vault Sync will sync one Vault instance with multiple other Vault instances",
+	Long: `Vault Sync is a tool that will sync Vault secrets from one instance to multiple
+	other instances. It is useful for keeping secrets in sync across multiple regions, such 
+	as main site and disaster recovery site.`,
 }
 
 func Execute() {
@@ -32,9 +34,16 @@ func Execute() {
 	}
 }
 
+func SetVersionInfo(v, c, d, b string) {
+	version.SetVersionInfo(v, c, d, b)
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 	RootCmd.PersistentFlags().StringVarP(&cfgFile, CFG_FLAG_NAME, "c", "", "path to config file")
+
+	RootCmd.AddCommand(version.VersionCmd)
+	RootCmd.Version = version.GetVersion()
 
 	RootCmd.AddCommand(sync.SyncCmd)
 	RootCmd.AddCommand(pathmatcher.PathMatcherCmd)

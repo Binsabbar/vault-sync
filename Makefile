@@ -1,4 +1,4 @@
-.PHONY: help build test lint fmt clean docker-build up-deps-services up-app up-all down-app down-volume down logs setup release release-snapshot
+.PHONY: help build test lint fmt clean docker-build up-deps-services up-app up-all down-app down-volume down logs setup release release-snapshot go-build go-test go-test-coverage go-lint go-fmt go-fmt-check docker-up-deps-services docker-up-app docker-up-all docker-status docker-down-app docker-down docker-down-volume docker-deps-logs docker-app-logs
 
 # Variables
 BINARY_NAME=vault-sync
@@ -24,6 +24,7 @@ help:
 	@echo "  make go-test-coverage      - Run all tests with coverage"
 	@echo "  make go-lint               - Run golangci-lint"
 	@echo "  make go-fmt                - Format code with gofmt"
+	@echo "  make go-fmt-check          - Check if code is properly formatted"
 	@echo ""
 	@echo "$(YELLOW)Docker:$(NC)"
 	@echo "  make docker-build              - Build Docker image"
@@ -82,6 +83,17 @@ go-fmt:
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@gofmt -s -w .
 	@echo "$(GREEN)✓ Code formatted$(NC)"
+
+## fmt-check: Check if code is properly formatted
+go-fmt-check:
+	@echo "$(BLUE)Checking code formatting...$(NC)"
+	@OUTPUT=$$(gofmt -l .); \
+	if [ -n "$$OUTPUT" ]; then \
+		echo "$(RED)Go files are not formatted. Please run 'make go-fmt':$(NC)"; \
+		echo "$$OUTPUT"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✓ Code is properly formatted$(NC)"
 
 ## docker-build: Build Docker image
 docker-build:
@@ -148,6 +160,10 @@ setup:
 	@echo "$(YELLOW)5. Seeding Vault with random secrets...$(NC)"
 	@sh ./docker/seed-vault-secrets.sh
 	@echo "$(GREEN)✓ Setup complete! Use 'make docker-deps-logs' or `make docker-app-logs` to view logs$(NC)"
+
+
+export GITHUB_REPOSITORY_OWNER ?= binsabbar
+export DOCKER_REGISTRY ?= ghcr.io
 
 ## release: Create a new release with GoReleaser
 release:

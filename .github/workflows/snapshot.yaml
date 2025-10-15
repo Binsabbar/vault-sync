@@ -1,6 +1,7 @@
 name: snapshot release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
@@ -43,10 +44,13 @@ jobs:
       - name: Install dependencies
         run: go mod tidy
 
-      - name: Run GoReleaser (snapshot)
-        uses: goreleaser/goreleaser-action@v5
-        with:
-          version: 2.9.0
-          args: release --snapshot --clean
+      - name: Install GoReleaser
+        run: |
+          curl -sL https://github.com/goreleaser/goreleaser/releases/download/v1.22.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
+
+      - name: Run snapshot build with Makefile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          DOCKER_REGISTRY: ghcr.io
+        run: make release-snapshot

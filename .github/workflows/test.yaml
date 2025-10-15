@@ -4,14 +4,15 @@ on:
   workflow_call:
   workflow_dispatch:
   push:
-    branches:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+    branches-ignore:
       - 'main'
+      - 'master'
   pull_request:
     branches:
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'main'
+      - 'master'
 
 
 jobs:
@@ -59,14 +60,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Check go fmt
-        run: |
-          OUTPUT=$(gofmt -l .)
-          if [ -n "$OUTPUT" ]; then
-            echo "Go files are not formatted. Please run 'gofmt -w .':"
-            echo "$OUTPUT"
-            exit 1
-          fi
+      - name: Check formatting with Makefile
+        run: make go-fmt-check
 
   vet:
     needs: setup
@@ -114,7 +109,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Test with the Go CLI
-        run: go test -v ./...
+        run: make go-test
 
       - name: Display Docker logs on failure
         if: failure()
