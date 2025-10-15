@@ -36,4 +36,3 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
       - name: Run linting with Makefile
         run: make go-lint
-          only-new-issues: true
