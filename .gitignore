@@ -41,3 +41,4 @@ coverage.*
 *.user
 
 vault-keys.txt
+sample-config-docker.yaml
