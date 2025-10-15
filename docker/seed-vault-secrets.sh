@@ -15,10 +15,12 @@ usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
+    echo "  Auto-detect:   $0                              (reads from vault-config.env)"
     echo "  With token:    $0 <vault-token>"
     echo "  With userpass: VAULT_USERNAME=user VAULT_PASSWORD=pass $0"
     echo ""
     echo "Examples:"
+    echo "  $0                                             # Auto-detect from vault-config.env"
     echo "  $0 hvs.CAESIJ..."
     echo "  VAULT_USERNAME=admin VAULT_PASSWORD=secret $0"
     exit 1
@@ -44,7 +46,20 @@ if [ -n "$VAULT_USERNAME" ] && [ -n "$VAULT_PASSWORD" ]; then
 elif [ -n "$1" ]; then
     VAULT_TOKEN="$1"
 elif [ -z "$VAULT_TOKEN" ]; then
-    usage
+    # Try to auto-detect token from vault-config.env
+    if [ -f "vault-config.env" ]; then
+        echo "Auto-detecting token from vault-config.env..."
+        VAULT_TOKEN=$(grep "VAULT1_ROOT_TOKEN" vault-config.env | cut -d'"' -f2)
+        if [ -n "$VAULT_TOKEN" ]; then
+            echo "✓ Token found in vault-config.env"
+        else
+            echo "Error: Could not extract token from vault-config.env"
+            usage
+        fi
+    else
+        echo "Error: vault-config.env not found and no token provided"
+        usage
+    fi
 fi
 
 export VAULT_ADDR VAULT_TOKEN VAULT_SKIP_VERIFY

@@ -2,9 +2,6 @@
 services:
   app:
     image: vault-sync:latest
-    build:
-      context: .
-      dockerfile: Dockerfile-local
     command: ["sync", "--config", "/tmp/sample-config.yaml"]
     volumes:
       - ./sample-config-docker.yaml:/tmp/sample-config.yaml:ro
