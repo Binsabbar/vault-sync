@@ -3,7 +3,6 @@ package pathmatching
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"vault-sync/internal/config"
@@ -107,10 +106,6 @@ func (pm *VaultPathMatcher) DiscoverFromMounts(ctx context.Context, mounts []str
 
 func (pm *VaultPathMatcher) ShouldSync(mount, keyPath string) bool {
 	return pm.cpm.ShouldSync(mount, keyPath)
-}
-
-func (pm *VaultPathMatcher) isMountAllowed(mount string) bool {
-	return slices.Contains(pm.syncRule.KvMounts, mount)
 }
 
 func (pm *VaultPathMatcher) discoverSecretsInMount(
