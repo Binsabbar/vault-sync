@@ -44,17 +44,16 @@ jobs:
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
           echo "version=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           echo "Version: ${BRANCH_NAME}"
-      - name: Install GoReleaser
-        run: |
-          curl -sL https://github.com/goreleaser/goreleaser/releases/download/v2.6.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
       - name: Create git tag for GoReleaser
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a ${{ steps.version.outputs.version }} -m "Release ${{ steps.version.outputs.version }}"
-      - name: Build and push with Makefile (GoReleaser)
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: ~> v2
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
-          DOCKER_REGISTRY: ghcr.io
-        run: make release
