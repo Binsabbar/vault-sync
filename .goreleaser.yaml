@@ -45,8 +45,8 @@ changelog:
 
 dockers:
   - image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}:latest"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:latest"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     build_flag_templates:
