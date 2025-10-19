@@ -3,12 +3,24 @@ on:
   workflow_call:
   workflow_dispatch:
   push:
+    paths:
+      - '.github/workflows/**'
+      - '**/*.go'
+      - '**/*.mod'
+      - '**/*.sum'
+      - '.golangci.yml'
     branches-ignore:
       - 'main'
       - 'master'
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
       - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '**/*.go'
+      - '**/*.mod'
+      - '**/*.sum'
+      - '.golangci.yml'
     branches:
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
       - 'v[0-9]+.[0-9]+.[0-9]+'
