@@ -73,11 +73,12 @@ go-test:
 go-test-verbose:
 	@echo "$(BLUE)Running all tests (verbose)...$(NC)"
 	@go test -v ./...
-		@echo "$(GREEN)✓ Tests completed$(NC)"
+	@echo "$(GREEN)✓ Tests completed$(NC)"
 
 go-test-coverage:
 	@echo "$(BLUE)Running all tests...$(NC)"
-	@go test -v -race -timeout 5m -cover ./...
+	@TEST_SILENT=1 go test -v -race -timeout 5m -cover ./...
+	@echo "$(GREEN)✓ Tests completed$(NC)"
 
 
 ## lint: Run golangci-lint
