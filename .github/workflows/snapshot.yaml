@@ -33,7 +33,7 @@ jobs:
         run: go mod tidy
       - name: Install GoReleaser
         run: |
-          curl -sL https://github.com/goreleaser/goreleaser/releases/download/v1.22.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
+          curl -sL https://github.com/goreleaser/goreleaser/releases/download/v2.6.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
       - name: Run snapshot build with Makefile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
