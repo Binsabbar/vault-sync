@@ -31,7 +31,10 @@ For example:
 
 func init() {
 	PathMatcherCmd.Flags().StringVarP(&pathsFile, "paths-file", "f", "", "File containing paths to test (one per line)")
-	PathMatcherCmd.MarkFlagRequired("paths-file")
+	if err := PathMatcherCmd.MarkFlagRequired("paths-file"); err != nil {
+		logger.Error().Err(err).Msg("Failed to mark paths-file as required")
+		os.Exit(-1)
+	}
 }
 
 func runPathMatcher(cmd *cobra.Command, args []string) {
@@ -106,7 +109,11 @@ func readPathsFromFile(filename string) ([]string, error) {
 		logger.Error().Err(err).Str("file_name", filename).Msg("failed to open file")
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			logger.Error().Err(err).Str("file_name", filename).Msg("failed to close file")
+		}
+	}()
 
 	var paths []string
 	scanner := bufio.NewScanner(file)
