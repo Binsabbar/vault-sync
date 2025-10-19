@@ -24,6 +24,10 @@ builds:
       - -X main.date={{.Date}}
       - -X main.builtBy=goreleaser
 
+snapshot:
+  # Templates: allowed.
+  version_template: "{{ .ShortCommit }}-devel"
+
 archives:
   - id: vault-sync
     formats: ["tar.gz", "zip"]
