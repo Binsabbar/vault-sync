@@ -1,4 +1,4 @@
-.PHONY: help build test lint fmt clean docker-build up-deps-services up-app up-all down-app down-volume down logs setup release release-snapshot go-build go-test go-test-coverage go-lint go-fmt go-fmt-check docker-up-deps-services docker-up-app docker-up-all docker-status docker-down-app docker-down docker-down-volume docker-deps-logs docker-app-logs
+.PHONY: help build test lint fmt clean docker-build up-deps-services up-app up-all down-app down-volume down logs setup release release-snapshot go-build go-test go-test-coverage go-lint go-vulncheck go-fmt go-fmt-check docker-up-deps-services docker-up-app docker-up-all docker-status docker-down-app docker-down docker-down-volume docker-deps-logs docker-app-logs
 
 # Variables
 BINARY_NAME=vault-sync
@@ -23,6 +23,7 @@ help:
 	@echo "  make go-test               - Run all tests"
 	@echo "  make go-test-coverage      - Run all tests with coverage"
 	@echo "  make go-lint               - Run golangci-lint"
+	@echo "  make go-vulncheck          - Run govulncheck for security vulnerabilities"
 	@echo "  make go-fmt                - Format code with gofmt"
 	@echo "  make go-fmt-check          - Check if code is properly formatted"
 	@echo ""
@@ -77,7 +78,7 @@ go-test-verbose:
 
 go-test-coverage:
 	@echo "$(BLUE)Running all tests...$(NC)"
-	@TEST_SILENT=1 go test -v -race -timeout 5m -cover ./...
+	@TEST_SILENT=1 go test -race -timeout 5m -cover ./...
 	@echo "$(GREEN)✓ Tests completed$(NC)"
 
 
@@ -86,6 +87,13 @@ go-lint:
 	@echo "$(BLUE)Running golangci-lint (production code only)...$(NC)"
 	@golangci-lint run --config .golangci.yml --timeout 5m
 	@echo "$(GREEN)✓ Linting complete$(NC)"
+
+## vulncheck: Run govulncheck for security vulnerabilities
+go-vulncheck:
+	@echo "$(BLUE)Running govulncheck for security vulnerabilities...$(NC)"
+	@which govulncheck > /dev/null || (echo "$(RED)Error: govulncheck not installed. Run: go install golang.org/x/vuln/cmd/govulncheck@latest$(NC)" && exit 1)
+	@govulncheck ./...
+	@echo "$(GREEN)✓ Vulnerability check complete$(NC)"
 
 ## fmt: Format code with gofmt
 go-fmt:
