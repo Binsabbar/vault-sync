@@ -53,14 +53,15 @@ func (o *replicaSyncHandler[T]) executeSync() ([]T, error) {
 	return results, nil
 }
 
-func (o *replicaSyncHandler[T]) syncSingleCluster(destinationCluster string) error {
+func (o *replicaSyncHandler[T]) syncSingleCluster(destinationCluster string) {
 	var zero T
 	var result any
 
 	switch any(zero).(type) {
 	case *models.SyncedSecret:
 		if o.operationType != operationTypeSync {
-			return fmt.Errorf("operation type mismatch: expected %s, got %s", operationTypeSync, o.operationType)
+			o.logger.Error().Msgf("Operation type mismatch: expected %s, got %s", operationTypeSync, o.operationType)
+			return
 		}
 		result = &models.SyncedSecret{
 			SecretBackend:      o.mount,
@@ -72,7 +73,8 @@ func (o *replicaSyncHandler[T]) syncSingleCluster(destinationCluster string) err
 		}
 	case *models.SyncSecretDeletionResult:
 		if o.operationType != operationTypeDelete {
-			return fmt.Errorf("operation type mismatch: expected %s, got %s", operationTypeDelete, o.operationType)
+			o.logger.Error().Msgf("Operation type mismatch: expected %s, got %s", operationTypeDelete, o.operationType)
+			return
 		}
 		result = &models.SyncSecretDeletionResult{
 			SecretBackend:      o.mount,
@@ -84,7 +86,6 @@ func (o *replicaSyncHandler[T]) syncSingleCluster(destinationCluster string) err
 	}
 
 	o.execute(destinationCluster, result.(T))
-	return nil
 }
 
 func (o *replicaSyncHandler[T]) execute(destinationCluster string, syncResult T) {

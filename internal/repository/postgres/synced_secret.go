@@ -74,7 +74,7 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 	}
 
 	dbOperation := func() (*models.SyncedSecret, error) {
-		var secret *models.SyncedSecret = &models.SyncedSecret{}
+		var secret = &models.SyncedSecret{}
 		query := `SELECT * FROM synced_secrets WHERE secret_backend = $1 AND secret_path = $2 AND destination_cluster = $3`
 
 		err := repo.psql.DB.Get(secret, query, backend, path, destinationCluster)
