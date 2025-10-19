@@ -203,25 +203,42 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.SyncRule.KvMounts must have at least 1 items",
 			},
 			{
-				name:        "kv_mounts contains duplicated items",
-				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.kv_mounts", []string{"secret", "secret", "secret2"}),
+				name: "kv_mounts contains duplicated items",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"sync_rule.kv_mounts",
+					[]string{"secret", "secret", "secret2"},
+				),
 				errContains: "Config.SyncRule.KvMounts must contain unique items",
 			},
 			{
-				name:        "duplicated paths in sync_rule.paths_to_replicate",
-				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.paths_to_replicate", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
+				name: "duplicated paths in sync_rule.paths_to_replicate",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"sync_rule.paths_to_replicate",
+					[]string{"secret/data/test", "secret/data/test", "secret/data/test2"},
+				),
 				errContains: "Config.SyncRule.PathsToReplicate must contain unique items",
 			},
 			{
-				name:        "duplicated paths in sync_rule.paths_to_ignore",
-				setFields:   updateAndReturnMap(validAppConfig, "sync_rule.paths_to_ignore", []string{"secret/data/test", "secret/data/test", "secret/data/test2"}),
+				name: "duplicated paths in sync_rule.paths_to_ignore",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"sync_rule.paths_to_ignore",
+					[]string{"secret/data/test", "secret/data/test", "secret/data/test2"},
+				),
 				errContains: "Config.SyncRule.PathsToIgnore must contain unique items",
 			},
 			{
 				name: "mautual execlusive paths in sync_rule.paths_to_replicate and sync_rule.paths_to_ignore",
 				setFields: updateAndReturnMap(
-					updateAndReturnMap(validAppConfig, "sync_rule.paths_to_replicate", []string{"secret/data/test1", "secret/data/test3"}),
-					"sync_rule.paths_to_ignore", []string{"secret/data/test4", "secret/data/test3"},
+					updateAndReturnMap(
+						validAppConfig,
+						"sync_rule.paths_to_replicate",
+						[]string{"secret/data/test1", "secret/data/test3"},
+					),
+					"sync_rule.paths_to_ignore",
+					[]string{"secret/data/test4", "secret/data/test3"},
 				),
 				errContains: "Config.SyncRule.PathsToIgnore must not contain items that are also in PathsToReplicate, Config.SyncRule.PathsToReplicate must not contain items that are also in PathsToReplicate",
 			},
@@ -255,7 +272,7 @@ func TestConfigurationValidation(t *testing.T) {
 			{
 				name:        "invalid postgres.port",
 				setFields:   updateAndReturnMap(validAppConfig, "postgres.port", "a"),
-				errContains: "cannot parse 'postgres.port' as int",
+				errContains: "'postgres.port' cannot parse value as 'int'",
 			},
 			{
 				name:        "missing postgres.username",
@@ -312,11 +329,15 @@ func TestConfigurationValidation(t *testing.T) {
 			{
 				name:        "invalid vault.main_cluster.tls_skip_verify",
 				setFields:   updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_skip_verify", "invalid"),
-				errContains: "cannot parse 'vault.main_cluster.tls_skip_verify' as bool",
+				errContains: "vault.main_cluster.tls_skip_verify' cannot parse value as 'bool'",
 			},
 			{
-				name:        "invalid vault.main_cluster.tls_cert_file",
-				setFields:   updateAndReturnMap(updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_cert_file", "invalid+/"), "vault.main_cluster.tls_skip_verify", "false"),
+				name: "invalid vault.main_cluster.tls_cert_file",
+				setFields: updateAndReturnMap(
+					updateAndReturnMap(validAppConfig, "vault.main_cluster.tls_cert_file", "invalid+/"),
+					"vault.main_cluster.tls_skip_verify",
+					"false",
+				),
 				errContains: "Config.Vault.MainCluster.TLSCertFile must be a valid file path",
 			},
 			{
@@ -325,33 +346,57 @@ func TestConfigurationValidation(t *testing.T) {
 				errContains: "Config.Vault.ReplicaClusters must have at least 1 items/characters",
 			},
 			{
-				name:        "missing vault.replica_cluster.name",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "name")),
+				name: "missing vault.replica_cluster.name",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					deleteFromMap(validVaultReplicaClusterConfig, "name"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].Name is required",
 			},
 			{
-				name:        "missing vault.replica_cluster.address	",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "address")),
+				name: "missing vault.replica_cluster.address	",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					deleteFromMap(validVaultReplicaClusterConfig, "address"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].Address is required",
 			},
 			{
-				name:        "invalid vault.replica_cluster.address	",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", updateAndReturnMap(validVaultReplicaClusterConfig, "address", "invalid")),
+				name: "invalid vault.replica_cluster.address	",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					updateAndReturnMap(validVaultReplicaClusterConfig, "address", "invalid"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].Address must be a valid URL",
 			},
 			{
-				name:        "missing vault.replica_cluster.app_role_id",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role_id")),
+				name: "missing vault.replica_cluster.app_role_id",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					deleteFromMap(validVaultReplicaClusterConfig, "app_role_id"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].AppRoleID is required",
 			},
 			{
-				name:        "missing vault.replica_cluster.app_role_secret",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role_secret")),
+				name: "missing vault.replica_cluster.app_role_secret",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					deleteFromMap(validVaultReplicaClusterConfig, "app_role_secret"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].AppRoleSecret is required",
 			},
 			{
-				name:        "invalid vault.replica_cluster.tls_cert_file",
-				setFields:   updateAndReturnMap(validAppConfig, "vault.replica_clusters", updateAndReturnMap(validVaultReplicaClusterConfig, "tls_cert_file", "invalid+/")),
+				name: "invalid vault.replica_cluster.tls_cert_file",
+				setFields: updateAndReturnMap(
+					validAppConfig,
+					"vault.replica_clusters",
+					updateAndReturnMap(validVaultReplicaClusterConfig, "tls_cert_file", "invalid+/"),
+				),
 				errContains: "Config.Vault.ReplicaClusters[0].TLSCertFile must be a valid file path",
 			},
 		}
@@ -374,7 +419,11 @@ func TestConfigurationValidation(t *testing.T) {
 	t.Run("It sets default values for optional params", func(t *testing.T) {
 		viper.Reset()
 		config := deleteFromMap(
-			updateAndReturnMap(validAppConfig, "vault.replica_clusters", deleteFromMap(validVaultReplicaClusterConfig, "app_role_mount", "tls_skip_verify")),
+			updateAndReturnMap(
+				validAppConfig,
+				"vault.replica_clusters",
+				deleteFromMap(validVaultReplicaClusterConfig, "app_role_mount", "tls_skip_verify"),
+			),
 			"log_level",
 			"postgres.ssl_mode",
 			"vault.main_cluster.app_role_mount",
@@ -388,10 +437,30 @@ func TestConfigurationValidation(t *testing.T) {
 
 		assert.Equal(t, "info", cfg.LogLevel, "Default value for log_level should be 'info'")
 		assert.Equal(t, "disable", cfg.Postgres.SSLMode, "Default value for postgres.ssl_mode should be 'disable'")
-		assert.Equal(t, "approle", cfg.Vault.MainCluster.AppRoleMount, "Default value for vault.main_cluster.app_role_mount should be 'approle'")
-		assert.Equal(t, false, cfg.Vault.MainCluster.TLSSkipVerify, "Default value for vault.main_cluster.tls_skip_verify should be 'false'")
-		assert.Equal(t, "approle", cfg.Vault.ReplicaClusters[0].AppRoleMount, "Default value for vault.replica_clusters[0].app_role_mount should be 'approle'")
-		assert.Equal(t, false, cfg.Vault.ReplicaClusters[0].TLSSkipVerify, "Default value for vault.replica_clusters[0].tls_skip_verify should be 'false'")
+		assert.Equal(
+			t,
+			"approle",
+			cfg.Vault.MainCluster.AppRoleMount,
+			"Default value for vault.main_cluster.app_role_mount should be 'approle'",
+		)
+		assert.Equal(
+			t,
+			false,
+			cfg.Vault.MainCluster.TLSSkipVerify,
+			"Default value for vault.main_cluster.tls_skip_verify should be 'false'",
+		)
+		assert.Equal(
+			t,
+			"approle",
+			cfg.Vault.ReplicaClusters[0].AppRoleMount,
+			"Default value for vault.replica_clusters[0].app_role_mount should be 'approle'",
+		)
+		assert.Equal(
+			t,
+			false,
+			cfg.Vault.ReplicaClusters[0].TLSSkipVerify,
+			"Default value for vault.replica_clusters[0].tls_skip_verify should be 'false'",
+		)
 
 	})
 }
