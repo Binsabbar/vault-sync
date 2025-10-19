@@ -211,7 +211,7 @@ func (b *VaultMockBuilder) Build() *mockVaultClient {
 			if !*b.sourceSecretExists {
 				b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(nil, errors.New("secret not found"))
 			} else {
-				metadata := &vault.VaultSecretMetadataResponse{CurrentVersion: b.sourceSecretVersion}
+				metadata := &vault.SecretMetadataResponse{CurrentVersion: b.sourceSecretVersion}
 				b.mockVault.On("GetSecretMetadata", mock.Anything, b.mount, b.keyPath).Return(metadata, nil)
 			}
 		}

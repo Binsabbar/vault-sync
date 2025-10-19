@@ -2,12 +2,13 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib" // this is required to register the pgx driver with database/sql
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 
@@ -19,6 +20,7 @@ import (
 	"vault-sync/pkg/log"
 )
 
+//nolint:gochecknoglobals
 var defaultHealthCheckPeriod = 1 * time.Minute
 
 type PostgresDatastore struct {
@@ -32,12 +34,16 @@ type PostgresDatastore struct {
 
 type PostgresConfig struct {
 	*config.Postgres
+
 	MinimumConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
 }
 
-func NewPostgresDatastore(cfg *config.Postgres, migrationSource migrations.MigrationSource) (*PostgresDatastore, error) {
+func NewPostgresDatastore(
+	cfg *config.Postgres,
+	migrationSource migrations.MigrationSource,
+) (*PostgresDatastore, error) {
 	connectionString := buildPostgresDSN(cfg)
 	redactedConnectionString := redactDSN(connectionString)
 
@@ -53,9 +59,9 @@ func NewPostgresDatastore(cfg *config.Postgres, migrationSource migrations.Migra
 	defaultPoolConfig.Postgres = cfg
 	setPoolConfig(defaultPoolConfig, db)
 
-	if err := db.Ping(); err != nil {
-		log.Logger.Error().Err(err).Str("dsn", redactedConnectionString).Msg("Failed to ping database")
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	if pingErr := db.Ping(); pingErr != nil {
+		log.Logger.Error().Err(pingErr).Str("dsn", redactedConnectionString).Msg("Failed to ping database")
+		return nil, fmt.Errorf("failed to ping database: %w", pingErr)
 	}
 
 	log.Logger.Info().Str("dsn", redactedConnectionString).Msg("Successfully connected to PostgreSQL")
@@ -123,9 +129,9 @@ func (p *PostgresDatastore) initSchema() error {
 	}
 
 	p.logger.Info().Msg("Applying migrations...")
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		p.logger.Error().Err(err).Msg("Failed to apply migrations")
-		return fmt.Errorf("failed to apply migrations: %w", err)
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
+		p.logger.Error().Err(upErr).Msg("Failed to apply migrations")
+		return fmt.Errorf("failed to apply migrations: %w", upErr)
 	}
 
 	version, dirty, err := m.Version()
@@ -157,6 +163,7 @@ func buildPostgresDSN(cfg *config.Postgres) string {
 	return dsn.String()
 }
 
+//nolint:mnd
 func defaultPoolConfig() PostgresConfig {
 	return PostgresConfig{
 		MinimumConns:    5,
@@ -179,6 +186,7 @@ func setPoolConfig(cfg PostgresConfig, db *sqlx.DB) {
 		Msg("Configured PostgreSQL connection pool")
 }
 
+//nolint:mnd
 func (p *PostgresDatastore) startHealthCheck() {
 	p.healthCheckDone.Add(1)
 	go func() {

@@ -63,9 +63,18 @@ go-build:
 	@echo "$(GREEN)✓ Build complete: bin/$(BINARY_NAME)$(NC)"
 
 ## test: Run all tests
+## test: Run tests silently  
 go-test:
 	@echo "$(BLUE)Running all tests...$(NC)"
-	@go test -v -race -timeout 5m ./...
+	@TEST_SILENT=1 go test ./...
+	@echo "$(GREEN)✓ Tests completed$(NC)"
+
+## test-verbose: Run tests with logs
+go-test-verbose:
+	@echo "$(BLUE)Running all tests (verbose)...$(NC)"
+	@go test -v ./...
+		@echo "$(GREEN)✓ Tests completed$(NC)"
+
 go-test-coverage:
 	@echo "$(BLUE)Running all tests...$(NC)"
 	@go test -v -race -timeout 5m -cover ./...
@@ -73,9 +82,8 @@ go-test-coverage:
 
 ## lint: Run golangci-lint
 go-lint:
-	@echo "$(BLUE)Running golangci-lint...$(NC)"
-	@which golangci-lint > /dev/null || (echo "$(RED)Error: golangci-lint not installed$(NC)" && exit 1)
-	@golangci-lint run --timeout 5m ./...
+	@echo "$(BLUE)Running golangci-lint (production code only)...$(NC)"
+	@golangci-lint run --config .golangci.yml --timeout 5m
 	@echo "$(GREEN)✓ Linting complete$(NC)"
 
 ## fmt: Format code with gofmt

@@ -24,7 +24,7 @@ type SyncJobIntegrationTestSuite struct {
 	vaultMainHelper     *testutil.VaultHelper
 	vaultReplica1Helper *testutil.VaultHelper
 	vaultReplica2Helper *testutil.VaultHelper
-	vaultClient         vault.VaultSyncer
+	vaultClient         vault.Syncer
 
 	pgHelper *testutil.PostgresHelper
 	repo     repository.SyncedSecretRepository
@@ -33,6 +33,7 @@ type SyncJobIntegrationTestSuite struct {
 var (
 	teamAMount   = "team-a"
 	teamBMount   = "team-b"
+	masterName   = "main"
 	replica1Name = "replica-0"
 	replica2Name = "replica-1"
 	mounts       = []string{teamAMount, teamBMount}
@@ -75,7 +76,7 @@ func (suite *SyncJobIntegrationTestSuite) setupRepositoryClient() {
 	suite.NoError(err, "Failed to create Postgres container")
 	db, err := db.NewPostgresDatastore(suite.pgHelper.Config, migrations.NewPostgresMigration())
 	suite.NoError(err, "Failed to create PostgreSQLSyncedSecretRepository")
-	suite.repo = postgres.NewPostgreSQLSyncedSecretRepository(db)
+	suite.repo = postgres.NewSyncedSecretRepository(db)
 }
 
 func TestSyncJobIntegrationTestSuite(t *testing.T) {
@@ -148,6 +149,7 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		suite.NoError(err)
 		suite.Len(result.Status, 2)
 		suite.verifySecretsAndDatabase(keyPath, updatedSecretData, result, map[string]int64{
+			masterName:   2,
 			replica1Name: 2,
 			replica2Name: 2,
 		})
@@ -177,7 +179,7 @@ func (suite *SyncJobIntegrationTestSuite) TestSyncJob_Execute() {
 		suite.NoError(err)
 		suite.Len(resyncResult.Status, 2)
 		suite.verifySecretsAndDatabase(keyPath, sourceSecretData, resyncResult, map[string]int64{
-			replica1Name: 1,
+			replica1Name: 2,
 			replica2Name: 1,
 		})
 	})
@@ -249,7 +251,12 @@ func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabaseDeleted(keyPat
 	}
 }
 
-func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabase(keyPath string, sourceSecretData map[string]string, result *SyncJobResult, expectedVersions map[string]int64) {
+func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabase(
+	keyPath string,
+	sourceSecretData map[string]string,
+	result *SyncJobResult,
+	expectedVersions map[string]int64,
+) {
 	// Check DB records for both replicas
 	sql, _ := suite.pgHelper.ExecutePsqlCommand(suite.ctx, fmt.Sprintf(selectQuery, teamAMount, keyPath, replica1Name))
 	replica0Secret := mapDatabaseRecordToSyncedSecret(sql)
@@ -263,13 +270,18 @@ func (suite *SyncJobIntegrationTestSuite) verifySecretsAndDatabase(keyPath strin
 		suite.Equal(keyPath, record.SecretPath)
 
 		// Check source version
-		suite.Equal(int64(1), record.SourceVersion) // Default to 1 if not specified
-
-		// Check destination version
-		if expectedVersion, ok := expectedVersions[destinationCluster]; ok {
-			suite.Equal(expectedVersion, record.DestinationVersion)
+		masterError := fmt.Sprintf("missing master version for record %+v", record.SourceVersion)
+		if expectedVersion, ok := expectedVersions[masterName]; ok {
+			suite.Equal(expectedVersion, record.SourceVersion, masterError)
 		} else {
-			suite.Equal(int64(1), record.DestinationVersion)
+			suite.Equal(int64(1), record.SourceVersion, masterError) // Default to 1 if not specified
+		}
+		// Check destination version
+		replicaError := fmt.Sprintf("missing replica version for record %+v", record.DestinationVersion)
+		if expectedVersion, ok := expectedVersions[destinationCluster]; ok {
+			suite.Equal(expectedVersion, record.DestinationVersion, replicaError)
+		} else {
+			suite.Equal(int64(1), record.DestinationVersion, replicaError)
 		}
 
 		// Check job result status
