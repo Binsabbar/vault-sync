@@ -8,19 +8,19 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// CorePathMatcher contains the core pattern matching logic without dependencies
+// CorePathMatcher contains the core pattern matching logic without dependencies.
 type CorePathMatcher struct {
 	syncRule *config.SyncRule
 }
 
-// NewCorePathMatcher creates a new core path matcher
+// NewCorePathMatcher creates a new core path matcher.
 func NewCorePathMatcher(syncRule *config.SyncRule) *CorePathMatcher {
 	return &CorePathMatcher{
 		syncRule: syncRule,
 	}
 }
 
-// ShouldSync checks if a secret path should be synced based on sync rules
+// ShouldSync checks if a secret path should be synced based on sync rules.
 func (cpm *CorePathMatcher) ShouldSync(mount, keyPath string) bool {
 	if !cpm.isMountAllowed(mount) {
 		return false

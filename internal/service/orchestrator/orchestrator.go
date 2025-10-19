@@ -28,19 +28,18 @@ type SyncResult struct {
 
 type SyncOrchestrator struct {
 	logger      zerolog.Logger
-	vaultClient vault.VaultSyncer
+	vaultClient vault.Syncer
 	pathMatcher pathmatching.PathMatcher
 	dbClient    repository.SyncedSecretRepository
 	concurrency int
 }
 
 func NewSyncOrchestrator(
-	vaultClient vault.VaultSyncer,
+	vaultClient vault.Syncer,
 	dbClient repository.SyncedSecretRepository,
 	pathMatcher pathmatching.PathMatcher,
 	concurrency int,
 ) *SyncOrchestrator {
-
 	return &SyncOrchestrator{
 		logger:      log.Logger.With().Str("component", "orchestrator").Logger(),
 		vaultClient: vaultClient,
@@ -97,7 +96,6 @@ func (o *SyncOrchestrator) executeSyncJobs(
 	ctx context.Context,
 	secretPaths []pathmatching.SecretPath,
 ) *SyncResult {
-
 	concurrency := o.concurrency
 	o.logger.Info().
 		Int("concurrency", concurrency).
@@ -137,7 +135,7 @@ func (o *SyncOrchestrator) runJobsInParallel(
 	return jobResults
 }
 
-// executeJob runs a single sync job
+// executeJob runs a single sync job.
 func (o *SyncOrchestrator) executeJob(
 	ctx context.Context,
 	secret pathmatching.SecretPath,
@@ -145,7 +143,6 @@ func (o *SyncOrchestrator) executeJob(
 	semaphore chan struct{},
 	jobResults chan *job.SyncJobResult,
 ) {
-
 	defer wg.Done()
 
 	cancelJob := func(secret pathmatching.SecretPath, err error) {
@@ -187,7 +184,7 @@ func (o *SyncOrchestrator) executeJob(
 	jobResults <- jobSyncResult
 }
 
-// collectResults aggregates job results and updates counters
+// collectResults aggregates job results and updates counters.
 func (o *SyncOrchestrator) collectResults(result *SyncResult, jobResults chan *job.SyncJobResult) {
 	for jobResult := range jobResults {
 		result.JobResults = append(result.JobResults, jobResult)
@@ -226,17 +223,17 @@ func (o *SyncOrchestrator) categorizeJobResult(jobResult *job.SyncJobResult, res
 	o.updateResultCounters(result, hasFailure, allNoOp, jobResult)
 }
 
-// isFailureStatus checks if a status indicates failure
+// isFailureStatus checks if a status indicates failure.
 func (o *SyncOrchestrator) isFailureStatus(status job.SyncJobStatus) bool {
 	return status == job.SyncJobStatusFailed || status == job.SyncJobStatusErrorDeleting
 }
 
-// isSuccessStatus checks if a status indicates a successful change
+// isSuccessStatus checks if a status indicates a successful change.
 func (o *SyncOrchestrator) isSuccessStatus(status job.SyncJobStatus) bool {
 	return status == job.SyncJobStatusUpdated || status == job.SyncJobStatusDeleted
 }
 
-// updateResultCounters updates the appropriate counter based on job outcome
+// updateResultCounters updates the appropriate counter based on job outcome.
 func (o *SyncOrchestrator) updateResultCounters(
 	result *SyncResult,
 	hasFailure bool,

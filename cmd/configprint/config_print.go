@@ -40,7 +40,7 @@ func init() {
 		"output format (yaml|json)")
 }
 
-func run(cmd *cobra.Command, args []string) {
+func run(_ *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "config_print").Logger()
 
 	cfg, err := config.NewConfig()
@@ -55,7 +55,6 @@ func run(cmd *cobra.Command, args []string) {
 		output = cfg
 		logger.Info().Msg("Printing entire configuration")
 	} else {
-		var err error
 		output, err = getSection(cfg, sectionFlag)
 		if err != nil {
 			logger.Error().Err(err).Str("section", sectionFlag).Msg("Invalid section")
@@ -113,6 +112,5 @@ func printYAML(logger zerolog.Logger, data interface{}) {
 }
 
 func printJSON(logger zerolog.Logger, data interface{}) {
-
 	logger.Info().Stack().Interface("config", data).Msg("Printing Configuration")
 }

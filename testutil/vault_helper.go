@@ -104,7 +104,6 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 		Token:       root_token,
 	}
 
-	fmt.Println("Vault container started at", vaultConfig.Address)
 	return &VaultHelper{
 		container: vaultContainer,
 		Config:    vaultConfig,
@@ -184,7 +183,11 @@ func (v *VaultHelper) EnableKVv2Mounts(ctx context.Context, mounts ...string) er
 // It generates a policy that allows reading and listing secrets in the specified mounts.
 // It returns the AppRole ID and secret.
 // The policy also includes permissions to read the mounts themselves.
-func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, approle string, mounts ...string) (string, string, error) {
+func (v *VaultHelper) CreateApproleWithReadPermissions(
+	ctx context.Context,
+	approle string,
+	mounts ...string,
+) (string, string, error) {
 	for _, mount := range mounts {
 		policyPaths := []string{
 			`path "auth/approle/login" { capabilities = ["create"] }`,
@@ -213,7 +216,11 @@ func (v *VaultHelper) CreateApproleWithReadPermissions(ctx context.Context, appr
 // It generates a policy that allows creating, updating, reading, and listing secrets in the specified mounts.
 // It returns the AppRole ID and secret.
 // The policy also includes permissions to read the mounts themselves.
-func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approle string, mounts ...string) (roleID string, roleSecret string, err error) {
+func (v *VaultHelper) CreateApproleWithRWPermissions(
+	ctx context.Context,
+	approle string,
+	mounts ...string,
+) (roleID string, roleSecret string, err error) {
 	for _, mount := range mounts {
 		policyPaths := []string{
 			`path "auth/approle/login" { capabilities = ["create"] }`,
@@ -221,9 +228,16 @@ func (v *VaultHelper) CreateApproleWithRWPermissions(ctx context.Context, approl
 			`path "sys/mounts/*" { capabilities = ["read", "list"] }`,
 		}
 		for _, mount := range mounts {
-			policyPaths = append(policyPaths,
-				fmt.Sprintf(`path "%s/data/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`, mount),
-				fmt.Sprintf(`path "%s/metadata/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`, mount),
+			policyPaths = append(
+				policyPaths,
+				fmt.Sprintf(
+					`path "%s/data/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`,
+					mount,
+				),
+				fmt.Sprintf(
+					`path "%s/metadata/*" { capabilities = ["create", "update", "read", "list", "delete"]  }`,
+					mount,
+				),
 			)
 		}
 		policy := strings.Join(policyPaths, "\n")
@@ -450,7 +464,11 @@ func SetupOneMainTwoReplicaClusters(mounts ...string) *QuickVaultHelperSetup {
 		Replica2Vault: clusters.ReplicasClusters[1],
 	}
 
-	result.MainConfig, result.ReplicasConfig = SetupExistingClusters(clusters.MainVaultCluster, clusters.ReplicasClusters[0], clusters.ReplicasClusters[1], mounts...)
+	result.MainConfig, result.ReplicasConfig = SetupExistingClusters(
+		clusters.MainVaultCluster,
+		clusters.ReplicasClusters[0],
+		clusters.ReplicasClusters[1],
+		mounts...)
 
 	return result
 }
@@ -461,7 +479,12 @@ func checkErrorP(msg string, err error) {
 	}
 }
 
-func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
+func SetupExistingClusters(
+	mainCluster *VaultHelper,
+	replica1 *VaultHelper,
+	replica2 *VaultHelper,
+	mounts ...string,
+) (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
 	ctx := context.Background()
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
 	errors := make(chan error, len(helpers))
@@ -501,7 +524,10 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 			AppRoleMount:  "approle",
 			TLSSkipVerify: true,
 		}
-		mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(ctx, "main", mounts...)
+		mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(
+			ctx,
+			"main",
+			mounts...)
 		checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
 	}
 
@@ -513,7 +539,10 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 			AppRoleMount:  "approle",
 			TLSSkipVerify: true,
 		}
-		replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(ctx, "replica-1", mounts...)
+		replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(
+			ctx,
+			"replica-1",
+			mounts...)
 		checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
 	}
 
@@ -525,7 +554,10 @@ func SetupExistingClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repl
 			AppRoleMount:  "approle",
 			TLSSkipVerify: true,
 		}
-		replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(ctx, "replica-2", mounts...)
+		replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(
+			ctx,
+			"replica-2",
+			mounts...)
 		checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
 	}
 
@@ -546,7 +578,6 @@ func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, repli
 				errors <- helper.Terminate(ctx)
 			}
 		}(vaultHelper)
-
 	}
 	handleErrorsChan("TerminateAllClusters", errors, 3)
 }

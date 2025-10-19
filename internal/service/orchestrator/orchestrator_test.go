@@ -34,7 +34,7 @@ type OrchestratorTestSuite struct {
 
 	// Database
 	pgHelper *testutil.PostgresHelper
-	repo     *postgres.PostgreSQLSyncedSecretRepository
+	repo     *postgres.SyncedSecretRepository
 }
 
 const (
@@ -70,7 +70,7 @@ func (suite *OrchestratorTestSuite) setupRepositoryClient() {
 	suite.NoError(err, "Failed to create Postgres container")
 	db, err := db.NewPostgresDatastore(suite.pgHelper.Config, migrations.NewPostgresMigration())
 	suite.NoError(err, "Failed to create PostgreSQLSyncedSecretRepository")
-	suite.repo = postgres.NewPostgreSQLSyncedSecretRepository(db)
+	suite.repo = postgres.NewSyncedSecretRepository(db)
 }
 
 func (suite *OrchestratorTestSuite) SetupTest() {

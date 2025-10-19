@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"vault-sync/internal/models"
 	"vault-sync/internal/repository"
@@ -14,12 +15,12 @@ import (
 type SyncJob struct {
 	mount          string
 	keyPath        string
-	vaultClient    vault.VaultSyncer
+	vaultClient    vault.Syncer
 	databaseClient repository.SyncedSecretRepository
 	logger         zerolog.Logger
 }
 
-// SyncDecision represents what action to take
+// SyncDecision represents what action to take.
 type SyncDecision int
 
 const (
@@ -28,7 +29,11 @@ const (
 	DecisionDelete
 )
 
-func NewSyncJob(mount, keyPath string, vaultClient vault.VaultSyncer, dbClient repository.SyncedSecretRepository) *SyncJob {
+func NewSyncJob(
+	mount, keyPath string,
+	vaultClient vault.Syncer,
+	dbClient repository.SyncedSecretRepository,
+) *SyncJob {
 	return &SyncJob{
 		mount:          mount,
 		keyPath:        keyPath,
@@ -70,7 +75,7 @@ func (job *SyncJob) Execute(ctx context.Context) (*SyncJobResult, error) {
 	}
 }
 
-// SyncState holds all the information needed to make sync decisions
+// SyncState holds all the information needed to make sync decisions.
 type SyncState struct {
 	ReplicaNames     []string
 	SourceExists     bool
@@ -101,23 +106,20 @@ func (job *SyncJob) gatherCurrentState(ctx context.Context) (*SyncState, error) 
 
 	// Get source version if exists
 	if sourceExists {
-		metadata, err := job.vaultClient.GetSecretMetadata(ctx, job.mount, job.keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get source metadata: %w", err)
+		metadata, getMetadataErr := job.vaultClient.GetSecretMetadata(ctx, job.mount, job.keyPath)
+		if getMetadataErr != nil {
+			return nil, fmt.Errorf("failed to get source metadata: %w", getMetadataErr)
 		}
 		state.SourceVersion = metadata.CurrentVersion
 
-		replicaExistence, err := job.checkReplicaExistence(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check replica existence: %w", err)
-		}
+		replicaExistence := job.checkReplicaExistence(ctx)
 		state.ReplicaExistence = replicaExistence
 	}
 
 	return state, nil
 }
 
-func (job *SyncJob) checkReplicaExistence(ctx context.Context) (map[string]bool, error) {
+func (job *SyncJob) checkReplicaExistence(ctx context.Context) map[string]bool {
 	logger := job.logger.With().Str("action", "check_replica_existence").Logger()
 
 	existence := make(map[string]bool)
@@ -141,7 +143,7 @@ func (job *SyncJob) checkReplicaExistence(ctx context.Context) (map[string]bool,
 			Msg("Checked replica secret existence")
 	}
 
-	return existence, nil
+	return existence
 }
 
 func (job *SyncJob) getDBRecords(replicaNames []string) (map[string]*models.SyncedSecret, error) {
@@ -150,7 +152,7 @@ func (job *SyncJob) getDBRecords(replicaNames []string) (map[string]*models.Sync
 	records := make(map[string]*models.SyncedSecret)
 	for _, clusterName := range replicaNames {
 		record, err := job.databaseClient.GetSyncedSecret(job.mount, job.keyPath, clusterName)
-		if err == repository.ErrSecretNotFound {
+		if errors.Is(err, repository.ErrSecretNotFound) {
 			logger.Debug().Str("cluster", clusterName).Msg("No DB record found")
 			continue
 		}
@@ -280,7 +282,13 @@ func (job *SyncJob) executeDelete(ctx context.Context) (*SyncJobResult, error) {
 			}
 			if dbErr := job.databaseClient.UpdateSyncedSecretStatus(updateResult); dbErr != nil {
 				localLogger.Error().Err(dbErr).Msg("Failed to update database with delete failure status")
-				multiErr.Add(fmt.Errorf("cluster %s DB update after vault delete failure: %w", deleteResult.DestinationCluster, dbErr))
+				multiErr.Add(
+					fmt.Errorf(
+						"cluster %s DB update after vault delete failure: %w",
+						deleteResult.DestinationCluster,
+						dbErr,
+					),
+				)
 			}
 		} else {
 			localLogger.Debug().Msg("Successfully deleted from vault - removing DB record")
@@ -314,7 +322,6 @@ func (job *SyncJob) buildNoOpResult(state *SyncState) *SyncJobResult {
 	return NewSyncJobResult(job, clusterStatuses, nil)
 }
 
-// Helper types and functions
 func (d SyncDecision) String() string {
 	switch d {
 	case DecisionNoOp:
@@ -348,7 +355,6 @@ func (m *MultiError) Err() error {
 	return fmt.Errorf("multiple errors: %v", m.errors)
 }
 
-// Rest of your existing types and constants remain the same...
 type SyncJobStatus string
 
 const (
@@ -362,6 +368,7 @@ const (
 )
 
 func mapFromSyncedSecretStatus(status models.SyncStatus) SyncJobStatus {
+	//nolint: exhaustive
 	switch status {
 	case models.StatusSuccess:
 		return SyncJobStatusUpdated
