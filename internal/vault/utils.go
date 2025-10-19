@@ -2,6 +2,7 @@ package vault
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"vault-sync/internal/models"
@@ -43,18 +44,18 @@ func extractMountFromPath(secretPath string) string {
 	return ""
 }
 
-// validateMountAndKeyPath validates that mount and keyPath are not empty
+// validateMountAndKeyPath validates that mount and keyPath are not empty.
 func validateMountAndKeyPath(mount, keyPath string) error {
 	if mount == "" {
-		return fmt.Errorf("mount cannot be empty")
+		return errors.New("mount cannot be empty")
 	}
 	if keyPath == "" {
-		return fmt.Errorf("key path cannot be empty")
+		return errors.New("key path cannot be empty")
 	}
 	return nil
 }
 
-// isNotFoundError checks if the error is a "not found" error
+// isNotFoundError checks if the error is a "not found" error.
 func isNotFoundError(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, ErrorNotFound404) ||
@@ -69,6 +70,7 @@ func logOperationSummary[T replicaSyncOperationResult](logger *zerolog.Logger, r
 	failureCount := 0
 	pendingCount := 0
 
+	//nolint: exhaustive
 	for _, result := range results {
 		switch result.GetStatus() {
 		case models.StatusSuccess:
@@ -87,29 +89,31 @@ func logOperationSummary[T replicaSyncOperationResult](logger *zerolog.Logger, r
 		Msg("Secret synchronization operation summary")
 }
 
-func parseVaultSecretResponse(data *vault.Response[schema.KvV2ReadResponse]) (*VaultSecretResponse, error) {
+func parseVaultSecretResponse(data *vault.Response[schema.KvV2ReadResponse]) (*SecretResponse, error) {
 	jsonData, err := json.Marshal(data.Data)
 	if err != nil {
 		return nil, err
 	}
 
-	var vaultResponse VaultSecretResponse
-	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretResponse: %w", err)
+	var vaultResponse SecretResponse
+	if unMarshalErr := json.Unmarshal(jsonData, &vaultResponse); unMarshalErr != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretResponse: %w", unMarshalErr)
 	}
 
 	return &vaultResponse, nil
 }
 
-func parseVaultSecretMetadataResponse(data *vault.Response[schema.KvV2ReadMetadataResponse]) (*VaultSecretMetadataResponse, error) {
+func parseVaultSecretMetadataResponse(
+	data *vault.Response[schema.KvV2ReadMetadataResponse],
+) (*SecretMetadataResponse, error) {
 	jsonData, err := json.Marshal(data.Data)
 	if err != nil {
 		return nil, err
 	}
 
-	var vaultResponse VaultSecretMetadataResponse
-	if err := json.Unmarshal(jsonData, &vaultResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretMetadataResponse: %w", err)
+	var vaultResponse SecretMetadataResponse
+	if jsonErr := json.Unmarshal(jsonData, &vaultResponse); jsonErr != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to VaultSecretMetadataResponse: %w", jsonErr)
 	}
 
 	return &vaultResponse, nil

@@ -422,7 +422,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 		setupSecrets   map[string]map[string]string // version -> secret data
 		expectError    bool
 		errorMsg       string
-		validateResult func(*MultiClusterVaultClientTestSuite, *VaultSecretMetadataResponse)
+		validateResult func(*MultiClusterVaultClientTestSuite, *SecretMetadataResponse)
 	}
 
 	testCases := []getSecretMetadataTestCase{
@@ -434,7 +434,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 				"v1": {"host": "db1.example.com", "password": "secret1"},
 			},
 			expectError: false,
-			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *VaultSecretMetadataResponse) {
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *SecretMetadataResponse) {
 				suite.Equal(int64(1), metadata.CurrentVersion)
 				suite.Len(metadata.Versions, 1)
 				suite.Contains(metadata.Versions, "1")
@@ -453,7 +453,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 				"v3": {"key": "api-key-v3", "env": "production", "rate_limit": "1000"},
 			},
 			expectError: false,
-			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *VaultSecretMetadataResponse) {
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *SecretMetadataResponse) {
 				suite.Equal(int64(3), metadata.CurrentVersion)
 				suite.Len(metadata.Versions, 3)
 				suite.Contains(metadata.Versions, "1")
@@ -476,7 +476,7 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetSecretMetadata() {
 				"v1": {"cluster": "prod-cluster", "namespace": "default"},
 			},
 			expectError: false,
-			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *VaultSecretMetadataResponse) {
+			validateResult: func(suite *MultiClusterVaultClientTestSuite, metadata *SecretMetadataResponse) {
 				suite.Equal(int64(1), metadata.CurrentVersion)
 				suite.Len(metadata.Versions, 1)
 			},

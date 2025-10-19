@@ -13,7 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// SecretPath represents a secret location
+// SecretPath represents a secret location.
 type SecretPath struct {
 	Mount   string `json:"mount"`
 	KeyPath string `json:"key_path"`
@@ -23,26 +23,26 @@ func (sp SecretPath) String() string {
 	return fmt.Sprintf("%s/%s", sp.Mount, sp.KeyPath)
 }
 
-// PathMatcher discovers and filters secrets based on sync rules
+// PathMatcher discovers and filters secrets based on sync rules.
 type PathMatcher interface {
-	// DiscoverSecretsForSync finds all secrets that should be synced based on sync rules
+	// DiscoverSecretsForSync finds all secrets that should be synced based on sync rules.
 	DiscoverSecretsForSync(ctx context.Context) ([]SecretPath, error)
 
-	// DiscoverFromMounts finds all secrets in specific mount points
+	// DiscoverFromMounts finds all secrets in specific mount points.
 	DiscoverFromMounts(ctx context.Context, mounts []string) ([]SecretPath, error)
 
-	// ShouldSync checks if a secret path should be synced based on sync rules
+	// ShouldSync checks if a secret path should be synced based on sync rules.
 	ShouldSync(mount, keyPath string) bool
 }
 
 type VaultPathMatcher struct {
-	vaultClient vault.VaultSyncer
+	vaultClient vault.Syncer
 	syncRule    *config.SyncRule
 	cpm         *CorePathMatcher
 	logger      zerolog.Logger
 }
 
-func NewVaultPathMatcher(vaultClient vault.VaultSyncer, syncRule *config.SyncRule) *VaultPathMatcher {
+func NewVaultPathMatcher(vaultClient vault.Syncer, syncRule *config.SyncRule) *VaultPathMatcher {
 	return &VaultPathMatcher{
 		vaultClient: vaultClient,
 		syncRule:    syncRule,
@@ -85,7 +85,7 @@ func (pm *VaultPathMatcher) DiscoverFromMounts(ctx context.Context, mounts []str
 
 	var allSecrets []SecretPath
 
-	filterFunc := func(path string, isFinalPath bool) bool { return true }
+	filterFunc := func(_ string, _ bool) bool { return true }
 
 	for _, mount := range mounts {
 		keyPaths, err := pm.vaultClient.GetKeysUnderMount(ctx, mount, filterFunc)
@@ -123,14 +123,13 @@ func (pm *VaultPathMatcher) discoverSecretsInMount(
 				Bool("should_include", shouldInclude).
 				Msg("Final path evaluation")
 			return shouldInclude
-		} else {
-			shouldTraverse := pm.shouldTraverseIntoPath(keyPath)
-			logger.Debug().
-				Str("path", keyPath).
-				Bool("should_traverse", shouldTraverse).
-				Msg("Traversal path evaluation")
-			return shouldTraverse
 		}
+		shouldTraverse := pm.shouldTraverseIntoPath(keyPath)
+		logger.Debug().
+			Str("path", keyPath).
+			Bool("should_traverse", shouldTraverse).
+			Msg("Traversal path evaluation")
+		return shouldTraverse
 	}
 
 	keyPaths, err := pm.vaultClient.GetKeysUnderMount(ctx, mount, filterFunc)

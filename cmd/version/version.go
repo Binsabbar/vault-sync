@@ -3,6 +3,8 @@ package version
 import (
 	"fmt"
 
+	"vault-sync/pkg/log"
+
 	"github.com/spf13/cobra"
 )
 
@@ -27,10 +29,12 @@ func GetVersion() string {
 var VersionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("vault-sync version %s\n", version)
-		fmt.Printf("  commit: %s\n", commit)
-		fmt.Printf("  built at: %s\n", date)
-		fmt.Printf("  built by: %s\n", builtBy)
+	Run: func(_ *cobra.Command, _ []string) {
+		logger := log.Logger.With().Str("component", "version").Logger()
+		logger.Info().
+			Str("commit", commit).
+			Str("built_at", date).
+			Str("built_by", builtBy).
+			Msg("vault-sync version information")
 	},
 }

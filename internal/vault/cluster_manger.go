@@ -76,11 +76,16 @@ func (cm *clusterManager) authenticate(ctx context.Context) error {
 	)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to authenticate with Vault")
-		return fmt.Errorf("failed to authenticate with role ID: %s at mount %s. (%w)", cm.config.AppRoleID, cm.config.AppRoleMount, err)
+		return fmt.Errorf(
+			"failed to authenticate with role ID: %s at mount %s. (%w)",
+			cm.config.AppRoleID,
+			cm.config.AppRoleMount,
+			err,
+		)
 	}
-	if err := cm.client.SetToken(res.Auth.ClientToken); err != nil {
-		logger.Error().Err(err).Msg("Failed to set client token")
-		return fmt.Errorf("failed to set client token: %w", err)
+	if setTokenErr := cm.client.SetToken(res.Auth.ClientToken); setTokenErr != nil {
+		logger.Error().Err(setTokenErr).Msg("Failed to set client token")
+		return fmt.Errorf("failed to set client token: %w", setTokenErr)
 	}
 	return nil
 }
@@ -102,9 +107,10 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 
 	data := resp.Data
 	if ttlInterface, ok := data["ttl"]; ok {
-		ttlSeconds, err := ttlInterface.(json.Number).Int64()
-		if err != nil {
-			return reauthenticate("Could not parse token TTL, re-authenticating", 0, err)
+		//nolint:errcheck
+		ttlSeconds, castErr := ttlInterface.(json.Number).Int64()
+		if castErr != nil {
+			return reauthenticate("Could not parse token TTL, re-authenticating", 0, castErr)
 		}
 
 		fiveMinutesInSeconds, _ := converter.ConvertInterfaceToInt64(fiveMinutes.Seconds())
@@ -121,7 +127,7 @@ func (cm *clusterManager) ensureValidToken(ctx context.Context) error {
 
 // checkMounts checks if the specified mounts exist in the Vault cluster.
 // It returns a slice of missing mounts if any are not found.
-func (cm *clusterManager) checkMounts(ctx context.Context, clusterName string, mounts []string) ([]string, error) {
+func (cm *clusterManager) checkMounts(ctx context.Context, mounts []string) ([]string, error) {
 	logger := cm.logger.With().
 		Str("action", "check_mounts").
 		Strs("mounts", mounts).
@@ -175,8 +181,12 @@ func (cm *clusterManager) retrieveSecretEngineMounts(ctx context.Context) (map[s
 	return existingMounts, nil
 }
 
-// fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster
-func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) ([]string, error) {
+// fetchKeysUnderMount retrieves all keys under a given mount from a specific cluster.
+func (cm *clusterManager) fetchKeysUnderMount(
+	ctx context.Context,
+	mount string,
+	shouldIncludeKeyPath func(path string, isFinalPath bool) bool,
+) ([]string, error) {
 	logger := cm.logger.With().
 		Str("action", "fetch_keys_under_mount").
 		Str("mount", mount).
@@ -188,7 +198,9 @@ func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string,
 	}
 
 	logger.Debug().Msg("Listing keys under mount")
-	var allKeys []string
+	// Pre-allocate with a reasonable initial capacity to reduce allocations
+	initialCapacity := 500
+	allKeys := make([]string, 0, initialCapacity)
 	err := cm.listKeysRecursively(ctx, mount, "", &allKeys, shouldIncludeKeyPath)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to list keys recursively")
@@ -203,8 +215,13 @@ func (cm *clusterManager) fetchKeysUnderMount(ctx context.Context, mount string,
 	return allKeys, nil
 }
 
-// listKeysRecursively recursively lists all keys under a path
-func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, currentPath string, allKeys *[]string, shouldIncludeKeyPath func(path string, isFinalPath bool) bool) error {
+// listKeysRecursively recursively lists all keys under a path.
+func (cm *clusterManager) listKeysRecursively(
+	ctx context.Context,
+	mount, currentPath string,
+	allKeys *[]string,
+	shouldIncludeKeyPath func(path string, isFinalPath bool) bool,
+) error {
 	listPath := ""
 	if currentPath != "" {
 		listPath = currentPath
@@ -228,18 +245,18 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 			keyPath = fmt.Sprintf("%s/%s", currentPath, key)
 		}
 
-		// If key ends with '/', it's a directory - recurse into it
-		if strings.HasSuffix(key, "/") {
-			dirPath := strings.TrimSuffix(keyPath, "/")
-			if shouldIncludeKeyPath(dirPath, false) {
-				err := cm.listKeysRecursively(ctx, mount, dirPath, allKeys, shouldIncludeKeyPath)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
+		if !strings.HasSuffix(key, "/") {
 			if shouldIncludeKeyPath(keyPath, true) {
 				*allKeys = append(*allKeys, keyPath)
+			}
+			continue
+		}
+		// If key ends with '/', it's a directory - recurse into it.
+		dirPath := strings.TrimRight(keyPath, "/")
+		if shouldIncludeKeyPath(dirPath, false) {
+			recursiveErr := cm.listKeysRecursively(ctx, mount, dirPath, allKeys, shouldIncludeKeyPath)
+			if recursiveErr != nil {
+				return recursiveErr
 			}
 		}
 	}
@@ -247,8 +264,11 @@ func (cm *clusterManager) listKeysRecursively(ctx context.Context, mount, curren
 	return nil
 }
 
-// fetchSecretMetadata retrieves metadata for a secret at the given mount and key path
-func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPath string) (*VaultSecretMetadataResponse, error) {
+// fetchSecretMetadata retrieves metadata for a secret at the given mount and key path.
+func (cm *clusterManager) fetchSecretMetadata(
+	ctx context.Context,
+	mount, keyPath string,
+) (*SecretMetadataResponse, error) {
 	logger := cm.logger.With().
 		Str("action", "fetch_secret_metadata").
 		Str("mount", mount).
@@ -282,7 +302,7 @@ func (cm *clusterManager) fetchSecretMetadata(ctx context.Context, mount, keyPat
 	return metadata, nil
 }
 
-// secretExists checks if a secret exists at the given mount and key path
+// secretExists checks if a secret exists at the given mount and key path.
 func (cm *clusterManager) secretExists(ctx context.Context, mount, keyPath string) (bool, error) {
 	logger := cm.logger.With().
 		Str("action", "secret_exists").
@@ -311,8 +331,8 @@ func (cm *clusterManager) secretExists(ctx context.Context, mount, keyPath strin
 	return true, nil
 }
 
-// readSecret reads secret data from the cluster
-func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string) (*VaultSecretResponse, error) {
+// readSecret reads secret data from the cluster.
+func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string) (*SecretResponse, error) {
 	logger := cm.logger.With().Str("action", "read_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
@@ -340,8 +360,12 @@ func (cm *clusterManager) readSecret(ctx context.Context, mount, keyPath string)
 	return secretResponse, nil
 }
 
-// writeSecret writes secret data to the cluster and returns the new version
-func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string, data map[string]interface{}) (int64, error) {
+// writeSecret writes secret data to the cluster and returns the new version.
+func (cm *clusterManager) writeSecret(
+	ctx context.Context,
+	mount, keyPath string,
+	data map[string]interface{},
+) (int64, error) {
 	logger := cm.logger.With().Str("action", "write_secret").
 		Str("mount", mount).
 		Str("key_path", keyPath).
@@ -364,7 +388,7 @@ func (cm *clusterManager) writeSecret(ctx context.Context, mount, keyPath string
 	return res.Data.Version, nil
 }
 
-// deleteSecret deletes a secret from the cluster
+// deleteSecret deletes a secret from the cluster.
 func (cm *clusterManager) deleteSecret(ctx context.Context, mount, keyPath string) error {
 	logger := cm.logger.With().
 		Str("action", "delete_secret").
