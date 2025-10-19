@@ -25,29 +25,15 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Go 1.24
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Install dependencies
         run: go mod tidy
-
       - name: Install GoReleaser
         run: |
           curl -sL https://github.com/goreleaser/goreleaser/releases/download/v1.22.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
-
       - name: Run snapshot build with Makefile
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
