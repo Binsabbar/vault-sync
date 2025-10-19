@@ -57,18 +57,23 @@ func (o *SyncOrchestrator) StartSync(ctx context.Context) (*SyncResult, error) {
 		return nil, ctx.Err()
 	}
 
-	secretPaths := o.discoverSecrets(ctx)
+	discoveredPaths := o.discoverSecrets(ctx)
+	syncedPaths, err := o.getAllSyncedPathsFromDB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get synced paths from DB: %w", err)
+	}
 
-	if len(secretPaths) == 0 {
+	allPathsToProcess := o.mergePathSets(discoveredPaths, syncedPaths)
+
+	if len(allPathsToProcess) == 0 {
 		return o.emptyResult(startTime), nil
 	}
 
-	result := o.executeSyncJobs(ctx, secretPaths)
+	result := o.executeSyncJobs(ctx, allPathsToProcess)
 	result.Duration = time.Since(startTime)
 
 	o.logSummary(result)
 
-	// Check if sync was interrupted
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("sync interrupted: %w", ctx.Err())
 	}
@@ -82,6 +87,62 @@ func (o *SyncOrchestrator) discoverSecrets(ctx context.Context) []pathmatching.S
 	secretPaths, _ := o.pathMatcher.DiscoverSecretsForSync(ctx)
 	o.logger.Info().Int("total_secrets", len(secretPaths)).Msg("Discovered secrets")
 	return secretPaths
+}
+
+func (o *SyncOrchestrator) getAllSyncedPathsFromDB() ([]pathmatching.SecretPath, error) {
+	o.logger.Debug().Msg("Getting all synced paths from database")
+
+	syncedRecords, err := o.dbClient.GetSyncedSecrets()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get synced secrets: %w", err)
+	}
+
+	pathSet := make(map[string]pathmatching.SecretPath)
+	for _, record := range syncedRecords {
+		key := fmt.Sprintf("%s/%s", record.SecretBackend, record.SecretPath)
+		pathSet[key] = pathmatching.SecretPath{
+			Mount:   record.SecretBackend,
+			KeyPath: record.SecretPath,
+		}
+	}
+
+	var paths []pathmatching.SecretPath
+	for _, path := range pathSet {
+		paths = append(paths, path)
+	}
+
+	o.logger.Debug().Int("synced_paths_count", len(paths)).Msg("Retrieved synced paths from database")
+	return paths, nil
+}
+
+func (o *SyncOrchestrator) mergePathSets(
+	discoveredPaths []pathmatching.SecretPath,
+	syncedPaths []pathmatching.SecretPath,
+) []pathmatching.SecretPath {
+	pathSet := make(map[string]pathmatching.SecretPath)
+
+	for _, path := range discoveredPaths {
+		key := fmt.Sprintf("%s/%s", path.Mount, path.KeyPath)
+		pathSet[key] = path
+	}
+
+	for _, path := range syncedPaths {
+		key := fmt.Sprintf("%s/%s", path.Mount, path.KeyPath)
+		pathSet[key] = path
+	}
+
+	var allPaths []pathmatching.SecretPath
+	for _, path := range pathSet {
+		allPaths = append(allPaths, path)
+	}
+
+	o.logger.Info().
+		Int("discovered_paths", len(discoveredPaths)).
+		Int("synced_paths", len(syncedPaths)).
+		Int("total_unique_paths", len(allPaths)).
+		Msg("Merged path sets for processing")
+
+	return allPaths
 }
 
 func (o *SyncOrchestrator) emptyResult(startTime time.Time) *SyncResult {
