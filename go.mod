@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.9.1
-	github.com/cenkalti/backoff/v5 v5.0.2
+	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/go-playground/validator/v10 v10.26.0
