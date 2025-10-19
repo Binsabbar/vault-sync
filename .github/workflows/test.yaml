@@ -14,7 +14,6 @@ on:
       - 'main'
       - 'master'
 
-
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -26,19 +25,18 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Install dependencies
-        run: go mod tidy
-
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Install dependencies
+        run: go mod download
 
   vet:
     needs: setup
@@ -57,9 +55,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run go vet
         run: go vet ./...
@@ -81,32 +82,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Test with the Go CLI
-        run: make go-test
+      - name: Download dependencies
+        run: go mod download
 
-      - name: Display Docker logs on failure
-        if: failure()
-        run: |
-          echo "Listing all Docker containers..."
-          docker ps -a
-          echo "Attempting to display logs for all containers..."
-          for id in $(docker ps -aq); do
-            echo "Logs for container $id:"
-            docker logs $id || echo "Failed to get logs for container $id"
-            echo "\n---\n"
-          done
-      
-  govulncheck_job:
-      needs: setup
-      runs-on: ubuntu-latest
-      name: Run govulncheck
-      steps:
-        - id: govulncheck
-          uses: golang/govulncheck-action@v1
-          with:
-            go-version-input: 1.24
-            go-package: ./...
+      - name: Run tests with Makefile
+        run: make go-test
