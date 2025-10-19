@@ -70,7 +70,7 @@ func (nt *NullableTime) String() string {
 	if nt.Time == nil {
 		return "null"
 	}
-	return nt.Time.Format(time.RFC3339)
+	return nt.Format(time.RFC3339)
 }
 
 func (nt *NullableTime) UnmarshalJSON(data []byte) error {

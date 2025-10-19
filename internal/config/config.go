@@ -65,9 +65,15 @@ var validate = validator.New()
 
 func init() {
 	validate.RegisterStructValidation(syncRuleValidation, SyncRule{})
-	validate.RegisterValidation("period_regex", periodRegexValidator)
-	validate.RegisterValidation("period_limit_max", periodLimitMaxValidator)
-	validate.RegisterValidation("period_limit_min", periodLimitMinValidator)
+	if err := validate.RegisterValidation("period_regex", periodRegexValidator); err != nil {
+		panic(fmt.Sprintf("failed to register period_regex validator: %v", err))
+	}
+	if err := validate.RegisterValidation("period_limit_max", periodLimitMaxValidator); err != nil {
+		panic(fmt.Sprintf("failed to register period_limit_max validator: %v", err))
+	}
+	if err := validate.RegisterValidation("period_limit_min", periodLimitMinValidator); err != nil {
+		panic(fmt.Sprintf("failed to register period_limit_min validator: %v", err))
+	}
 }
 
 var periodRegex = regexp.MustCompile(`^([0-9]+(s|m|h))$`)
@@ -166,7 +172,7 @@ func validateConfig(cfg Config) error {
 	for _, fieldError := range validationErrs {
 		namespace := fieldError.Namespace()
 		param := fieldError.Param()
-		var msg string = fmt.Sprintf("%s is invalid (rule: %s)", namespace, fieldError.Tag())
+		var msg = fmt.Sprintf("%s is invalid (rule: %s)", namespace, fieldError.Tag())
 
 		switch fieldError.Tag() {
 		case "required":
