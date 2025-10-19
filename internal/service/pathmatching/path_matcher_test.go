@@ -14,7 +14,7 @@ type PathMatcherTestSuite struct {
 	suite.Suite
 	ctx          context.Context
 	vaultCluster *testutil.VaultHelper
-	vaultClient  vault.VaultSyncer
+	vaultClient  vault.Syncer
 	mounts       []string
 }
 

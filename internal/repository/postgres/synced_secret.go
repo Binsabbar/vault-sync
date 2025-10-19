@@ -14,12 +14,12 @@ import (
 	"vault-sync/pkg/log"
 
 	"github.com/cenkalti/backoff/v5"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib" // this is required to register the pgx driver with database/sql
 	"github.com/rs/zerolog"
 	"github.com/sony/gobreaker"
 )
 
-type PostgreSQLSyncedSecretRepository struct {
+type SyncedSecretRepository struct {
 	psql           *postgres.PostgresDatastore
 	circuitBreaker *gobreaker.CircuitBreaker
 	retryOptFunc   func() []backoff.RetryOption
@@ -30,12 +30,14 @@ type SyncedSecretResult interface {
 	*models.SyncedSecret | []*models.SyncedSecret
 }
 
-// NewPostgreSQLSyncedSecretRepository creates a new PostgreSQLSyncedSecretRepository instance
+// NewSyncedSecretRepository creates a new PostgreSQLSyncedSecretRepository instance
 // with a configured circuit breaker and retry options.
 //
 // The circuit breaker is configured to trip after 30% failure rate with a maximum of 5 requests in half-open state.
 // The retry options use an exponential backoff strategy with a maximum of 10 retries and a total elapsed time of 60 seconds.
-func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *PostgreSQLSyncedSecretRepository {
+//
+//nolint:mnd
+func NewSyncedSecretRepository(psql *postgres.PostgresDatastore) *SyncedSecretRepository {
 	gobreakerSettings := gobreaker.Settings{
 		Name:        "synced_secret_db",
 		MaxRequests: 5,                // Allow 5 test requests in half-open state
@@ -56,7 +58,7 @@ func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *Post
 		},
 	}
 
-	return &PostgreSQLSyncedSecretRepository{
+	return &SyncedSecretRepository{
 		psql:           psql,
 		circuitBreaker: gobreaker.NewCircuitBreaker(gobreakerSettings),
 		retryOptFunc:   newBackoffStrategy,
@@ -66,7 +68,10 @@ func NewPostgreSQLSyncedSecretRepository(psql *postgres.PostgresDatastore) *Post
 	}
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, destinationCluster string) (*models.SyncedSecret, error) {
+//nolint:noctx, nilnil, unqueryvet
+func (repo *SyncedSecretRepository) GetSyncedSecret(
+	backend, path, destinationCluster string,
+) (*models.SyncedSecret, error) {
 	logger := repo.createOperationLogger("get_synced_secret", backend, path, destinationCluster)
 	if err := validateQueryParameters(backend, path, destinationCluster); err != nil {
 		logger.Error().Err(err).Msg("invalid query parameters for getting synced secret")
@@ -101,7 +106,8 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecret(backend, path, des
 	return secret, nil
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]*models.SyncedSecret, error) {
+//nolint:noctx, nilnil, unqueryvet
+func (repo *SyncedSecretRepository) GetSyncedSecrets() ([]*models.SyncedSecret, error) {
 	dbOperation := func() ([]*models.SyncedSecret, error) {
 		var secrets = make([]*models.SyncedSecret, 0)
 		query := `SELECT * FROM synced_secrets ORDER BY secret_backend, secret_path, destination_cluster`
@@ -126,8 +132,13 @@ func (repo *PostgreSQLSyncedSecretRepository) GetSyncedSecrets() ([]*models.Sync
 	return secrets, nil
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret *models.SyncedSecret) error {
-	logger := repo.createOperationLogger("update_synced_secret_status", secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
+func (repo *SyncedSecretRepository) UpdateSyncedSecretStatus(secret *models.SyncedSecret) error {
+	logger := repo.createOperationLogger(
+		"update_synced_secret_status",
+		secret.SecretBackend,
+		secret.SecretPath,
+		secret.DestinationCluster,
+	)
 
 	dbOperation := func() (*models.SyncedSecret, error) {
 		query := `
@@ -172,7 +183,8 @@ func (repo *PostgreSQLSyncedSecretRepository) UpdateSyncedSecretStatus(secret *m
 	return err
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) DeleteSyncedSecret(backend, path, destinationCluster string) error {
+//nolint:noctx, nilnil, unqueryvet
+func (repo *SyncedSecretRepository) DeleteSyncedSecret(backend, path, destinationCluster string) error {
 	logger := repo.createOperationLogger("delete_synced_secret", backend, path, destinationCluster)
 
 	if err := validateQueryParameters(backend, path, destinationCluster); err != nil {
@@ -208,7 +220,7 @@ func (repo *PostgreSQLSyncedSecretRepository) DeleteSyncedSecret(backend, path, 
 	return err
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) Close() error {
+func (repo *SyncedSecretRepository) Close() error {
 	if repo.psql != nil {
 		return repo.psql.Close()
 	}
@@ -217,15 +229,19 @@ func (repo *PostgreSQLSyncedSecretRepository) Close() error {
 
 // executeOperationInCircuitBreaker executes the provided database operation within a circuit breaker context.
 // It retries the operation using an exponential backoff strategy if it fails.
-func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSyncedSecretRepository, nullableResult bool, operation func() (T, error)) (T, error) {
+func executeOperationInCircuitBreaker[T SyncedSecretResult](
+	repo *SyncedSecretRepository,
+	nullableResult bool,
+	operation func() (T, error),
+) (T, error) {
 	var opsResult T
 
 	result, err := repo.circuitBreaker.Execute(func() (any, error) {
 		return backoff.Retry(context.Background(), operation, repo.retryOptFunc()...)
 	})
 
-	if err := repo.handleCircuitBreakerError(err); err != nil {
-		return opsResult, err
+	if circuitBreakerErr := repo.handleCircuitBreakerError(err); circuitBreakerErr != nil {
+		return opsResult, circuitBreakerErr
 	}
 
 	if result == nil || (reflect.ValueOf(result).Kind() == reflect.Ptr && reflect.ValueOf(result).IsNil()) {
@@ -237,13 +253,13 @@ func executeOperationInCircuitBreaker[T SyncedSecretResult](repo *PostgreSQLSync
 
 	typedResult, ok := result.(T)
 	if !ok {
-		return opsResult, fmt.Errorf("unexpected result type from circuit breaker")
+		return opsResult, errors.New("unexpected result type from circuit breaker")
 	}
 
 	return typedResult, nil
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err error) error {
+func (repo *SyncedSecretRepository) handleCircuitBreakerError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -258,6 +274,8 @@ func (repo *PostgreSQLSyncedSecretRepository) handleCircuitBreakerError(err erro
 
 // newBackoffStrategy creates a new backoff strategy for retrying database operations.
 // It uses an exponential backoff strategy with a maximum of 10 retries and a total elapsed time of 60 seconds.
+//
+//nolint:mnd
 func newBackoffStrategy() []backoff.RetryOption {
 	strategyOpts := &backoff.ExponentialBackOff{
 		InitialInterval:     250 * time.Millisecond,
@@ -275,7 +293,9 @@ func newBackoffStrategy() []backoff.RetryOption {
 	}
 }
 
-func (repo *PostgreSQLSyncedSecretRepository) createOperationLogger(event, backend, path, destinationCluster string) zerolog.Logger {
+func (repo *SyncedSecretRepository) createOperationLogger(
+	event, backend, path, destinationCluster string,
+) zerolog.Logger {
 	return repo.logger.With().
 		Str("event", event).
 		Str("backend", backend).

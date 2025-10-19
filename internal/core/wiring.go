@@ -53,16 +53,16 @@ func (w *Wiring) GetConfig() *config.Config {
 }
 
 func (w *Wiring) InitSyncedSecretRepository() repo.SyncedSecretRepository {
-	return psqlRepo.NewPostgreSQLSyncedSecretRepository(w.InitPostgresDataStore())
+	return psqlRepo.NewSyncedSecretRepository(w.InitPostgresDataStore())
 }
 
-func (w *Wiring) InitVaultClient(ctx context.Context) vault.VaultSyncer {
+func (w *Wiring) InitVaultClient(ctx context.Context) vault.Syncer {
 	configAsPointers := make([]*config.VaultClusterConfig, len(w.config.Vault.ReplicaClusters))
 	for i := range w.config.Vault.ReplicaClusters {
 		configAsPointers[i] = &w.config.Vault.ReplicaClusters[i]
 	}
 
-	var instance vault.VaultSyncer
+	var instance vault.Syncer
 	var once sync.Once
 	once.Do(func() {
 		var err error

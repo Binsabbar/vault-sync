@@ -1,8 +1,8 @@
-// internal/vault/client.go
 package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"vault-sync/internal/config"
@@ -40,13 +40,14 @@ func NewMultiClusterVaultClient(
 	}
 
 	for _, replicaCfg := range replicasConfig {
-		replicaClient, err := newClusterManager(replicaCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create replica cluster client %s: %w", replicaCfg.Name, err)
+		replicaClient, createErr := newClusterManager(replicaCfg)
+		if createErr != nil {
+			return nil,
+				fmt.Errorf("failed to create replica cluster client %s: %w", replicaCfg.Name, createErr)
 		}
-		err = replicaClient.authenticate(ctx)
-		if err != nil {
-			return nil, err
+		authErr := replicaClient.authenticate(ctx)
+		if authErr != nil {
+			return nil, authErr
 		}
 		multiClusterClient.replicaClusters[replicaCfg.Name] = replicaClient
 	}
@@ -67,10 +68,10 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(
 	mounts := extractMountsFromPaths(secretPaths)
 	if len(mounts) == 0 {
 		logger.Error().Msg("No valid mounts found in provided secret paths")
-		return nil, fmt.Errorf("no valid mounts found in provided secret paths")
+		return nil, errors.New("no valid mounts found in provided secret paths")
 	}
 
-	if missing, err := mc.mainCluster.checkMounts(ctx, "main", mounts); err != nil {
+	if missing, err := mc.mainCluster.checkMounts(ctx, mounts); err != nil {
 		return nil, err
 	} else if len(missing) > 0 {
 		logger.Error().Strs("missing_mounts", missing).Msg("Missing mounts in main cluster")
@@ -78,7 +79,7 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(
 	}
 
 	for name, cm := range mc.replicaClusters {
-		if missing, err := cm.checkMounts(ctx, name, mounts); err != nil {
+		if missing, err := cm.checkMounts(ctx, mounts); err != nil {
 			return nil, err
 		} else if len(missing) > 0 {
 			logger.Error().Str("replica_cluster", name).
@@ -99,7 +100,7 @@ func (mc *MultiClusterVaultClient) GetSecretMounts(
 // Returns metadata including version information, creation time, and deletion status.
 func (mc *MultiClusterVaultClient) GetSecretMetadata(
 	ctx context.Context, mount, keyPath string,
-) (*VaultSecretMetadataResponse, error) {
+) (*SecretMetadataResponse, error) {
 	logger := mc.createOperationLogger("get_secret_metadata", mount, keyPath)
 
 	logger.Debug().Msg("Retrieving secret metadata from main cluster")
@@ -132,7 +133,7 @@ func (mc *MultiClusterVaultClient) GetKeysUnderMount(
 	logger := mc.createOperationLogger("get_keys_under_mount", mount, "")
 	if mount == "" {
 		logger.Error().Msg("mount cannot be empty")
-		return nil, fmt.Errorf("mount cannot be empty")
+		return nil, errors.New("mount cannot be empty")
 	}
 
 	logger.Debug().Msg("Retrieving all keys under mount from main cluster")
@@ -156,7 +157,6 @@ func (mc *MultiClusterVaultClient) SecretExists(
 
 func (mc *MultiClusterVaultClient) SecretExistsInReplica(
 	ctx context.Context, clusterName, mount, path string) (bool, error) {
-
 	client, exists := mc.replicaClusters[clusterName]
 	if !exists {
 		return false, fmt.Errorf("replica cluster not found: %s", clusterName)
@@ -243,11 +243,14 @@ func (mc *MultiClusterVaultClient) GetReplicaNames() []string {
 	return names
 }
 
-// readSecretFromMainCluster reads both secret data and metadata from the main cluster
+// readSecretFromMainCluster reads both secret data and metadata from the main cluster.
 func (mc *MultiClusterVaultClient) readSecretFromMainCluster(
 	ctx context.Context, mount, keyPath string,
-) (*VaultSecretResponse, error) {
-	logger := mc.createOperationLogger("read_secret_main_cluster", mount, keyPath).With().Str("cluster", "main").Logger()
+) (*SecretResponse, error) {
+	logger := mc.createOperationLogger("read_secret_main_cluster", mount, keyPath).
+		With().
+		Str("cluster", "main").
+		Logger()
 
 	logger.Debug().Msg("Reading secret")
 	secretResponse, err := mc.mainCluster.readSecret(ctx, mount, keyPath)

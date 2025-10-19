@@ -37,7 +37,7 @@ func init() {
 	}
 }
 
-func runPathMatcher(cmd *cobra.Command, args []string) {
+func runPathMatcher(_ *cobra.Command, _ []string) {
 	cfg, err := config.NewConfig()
 
 	if err != nil {
@@ -71,8 +71,9 @@ func runPathMatcher(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		parts := strings.SplitN(fullPath, "/", 2)
-		if len(parts) != 2 {
+		pathNumOfParts := 2
+		parts := strings.SplitN(fullPath, "/", pathNumOfParts)
+		if len(parts) != pathNumOfParts {
 			logger.Warn().Msgf("❌ INVALID (format should be mount/path): %s", fullPath)
 			continue
 		}
@@ -110,8 +111,8 @@ func readPathsFromFile(filename string) ([]string, error) {
 		return nil, err
 	}
 	defer func() {
-		if err := file.Close(); err != nil {
-			logger.Error().Err(err).Str("file_name", filename).Msg("failed to close file")
+		if closeErr := file.Close(); closeErr != nil {
+			logger.Error().Err(closeErr).Str("file_name", filename).Msg("failed to close file")
 		}
 	}()
 

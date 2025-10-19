@@ -14,7 +14,6 @@ var SyncCmd = &cobra.Command{
 	Long:  `Synchronize secrets between Vault clusters with various execution modes.`,
 }
 
-// Subcommands
 var onceCmd = &cobra.Command{
 	Use:     "once",
 	Short:   "Run sync operation once and exit",
@@ -40,15 +39,12 @@ var dryRunCmd = &cobra.Command{
 }
 
 func init() {
-	// Add subcommands
 	SyncCmd.AddCommand(onceCmd)
-	// SyncCmd.AddCommand(daemonCmd)
 	SyncCmd.AddCommand(dryRunCmd)
-
 	// SyncCmd.Run = runOnce
 }
 
-func runOnce(cmd *cobra.Command, args []string) {
+func runOnce(cmd *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "sync-once").Logger()
 	logger.Info().Msg("Starting one-time vault-sync")
 
@@ -98,7 +94,7 @@ func runOnce(cmd *cobra.Command, args []string) {
 // 	}
 // }
 
-func runDryRun(cmd *cobra.Command, args []string) {
+func runDryRun(cmd *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "sync-dry-run").Logger()
 	logger.Info().Msg("Starting vault-sync dry-run")
 

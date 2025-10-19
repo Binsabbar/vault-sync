@@ -16,7 +16,7 @@ import (
 var cfgFile string
 
 const (
-	CFG_FLAG_NAME = "config"
+	ConfigFlagName = "config"
 )
 
 var RootCmd = &cobra.Command{
@@ -40,7 +40,7 @@ func SetVersionInfo(v, c, d, b string) {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	RootCmd.PersistentFlags().StringVarP(&cfgFile, CFG_FLAG_NAME, "c", "", "path to config file")
+	RootCmd.PersistentFlags().StringVarP(&cfgFile, ConfigFlagName, "c", "", "path to config file")
 
 	RootCmd.AddCommand(version.VersionCmd)
 	RootCmd.Version = version.GetVersion()

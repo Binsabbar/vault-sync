@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// SyncStatus represents the status of a secret synchronization operation
+// SyncStatus represents the status of a secret synchronization operation.
 const (
 	StatusSuccess      SyncStatus = "success"
 	StatusFailed       SyncStatus = "failed"
@@ -17,7 +17,7 @@ func (s SyncStatus) String() string {
 	return string(s)
 }
 
-// SyncedSecret represents a secret that has been synchronized to a replica cluster
+// SyncedSecret represents a secret that has been synchronized to a replica cluster.
 type SyncedSecret struct {
 	SecretBackend      string     `db:"secret_backend"`
 	SecretPath         string     `db:"secret_path"`
@@ -50,7 +50,7 @@ func (s *SyncedSecret) GetDestinationCluster() string {
 	return s.DestinationCluster
 }
 
-// SecretDeletionResult represents the result of deleting a secret from a replica cluster
+// SyncSecretDeletionResult represents the result of deleting a secret from a replica cluster.
 type SyncSecretDeletionResult struct {
 	DestinationCluster string
 	SecretBackend      string

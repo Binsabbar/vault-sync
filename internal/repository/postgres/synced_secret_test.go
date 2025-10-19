@@ -141,7 +141,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 			if tc.secretToInsert != nil {
 				suite.insertTestSecret(tc.secretToInsert)
 			}
-			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
+			repo := NewSyncedSecretRepository(suite.db)
 
 			result, err := repo.GetSyncedSecret(tc.backend, tc.path, tc.destinationCluster)
 
@@ -164,7 +164,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecret() {
 	}
 
 	suite.Run("not found errors does not trigger circuit breaker", func() {
-		repo := &PostgreSQLSyncedSecretRepository{
+		repo := &SyncedSecretRepository{
 			psql:           suite.db,
 			circuitBreaker: createFastFailCircuitBreaker(),
 			retryOptFunc:   createConstantBackoffRetryFunc(100*time.Millisecond, 2),
@@ -222,7 +222,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 			suite.insertTestSecret(secret)
 		}
 
-		repo := NewPostgreSQLSyncedSecretRepository(suite.db)
+		repo := NewSyncedSecretRepository(suite.db)
 
 		result, err := repo.GetSyncedSecrets()
 
@@ -236,7 +236,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestGetSyncedSecrets() {
 	})
 
 	suite.Run("returns empty slice for no secrets without error", func() {
-		repo := NewPostgreSQLSyncedSecretRepository(suite.db)
+		repo := NewSyncedSecretRepository(suite.db)
 
 		result, err := repo.GetSyncedSecrets()
 
@@ -330,7 +330,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestUpdateSyncedSecretStatus() {
 			if tc.secretToInsert != nil {
 				suite.insertTestSecret(tc.secretToInsert)
 			}
-			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
+			repo := NewSyncedSecretRepository(suite.db)
 
 			err := repo.UpdateSyncedSecretStatus(&tc.secretToUpdate)
 
@@ -446,7 +446,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestDeleteSyncedSecret() {
 				suite.insertTestSecret(tc.secretToInsert)
 			}
 
-			repo := NewPostgreSQLSyncedSecretRepository(suite.db)
+			repo := NewSyncedSecretRepository(suite.db)
 
 			err := repo.DeleteSyncedSecret(tc.backend, tc.path, tc.destinationCluster)
 
@@ -471,8 +471,8 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 
 	type testCases struct {
 		name              string
-		prepareTestFunc   func(repo *PostgreSQLSyncedSecretRepository)
-		functionToExecute func(repo *PostgreSQLSyncedSecretRepository) (any, error)
+		prepareTestFunc   func(repo *SyncedSecretRepository)
+		functionToExecute func(repo *SyncedSecretRepository) (any, error)
 	}
 
 	secret := &models.SyncedSecret{
@@ -489,35 +489,35 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 	tests := []testCases{
 		{
 			name: "GetSyncedSecret",
-			prepareTestFunc: func(repo *PostgreSQLSyncedSecretRepository) {
+			prepareTestFunc: func(repo *SyncedSecretRepository) {
 				suite.insertTestSecret(secret)
 			},
-			functionToExecute: func(repo *PostgreSQLSyncedSecretRepository) (any, error) {
+			functionToExecute: func(repo *SyncedSecretRepository) (any, error) {
 				return repo.GetSyncedSecret(secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
 			},
 		},
 		{
 			name:            "GetSyncedSecrets",
-			prepareTestFunc: func(repo *PostgreSQLSyncedSecretRepository) {},
-			functionToExecute: func(repo *PostgreSQLSyncedSecretRepository) (any, error) {
+			prepareTestFunc: func(repo *SyncedSecretRepository) {},
+			functionToExecute: func(repo *SyncedSecretRepository) (any, error) {
 				return repo.GetSyncedSecrets()
 			},
 		},
 		{
 			name: "UpdateSyncedSecretStatus",
-			prepareTestFunc: func(repo *PostgreSQLSyncedSecretRepository) {
+			prepareTestFunc: func(repo *SyncedSecretRepository) {
 				suite.insertTestSecret(secret)
 			},
-			functionToExecute: func(repo *PostgreSQLSyncedSecretRepository) (any, error) {
+			functionToExecute: func(repo *SyncedSecretRepository) (any, error) {
 				return nil, repo.UpdateSyncedSecretStatus(secret)
 			},
 		},
 		{
 			name: "DeleteSyncedSecret",
-			prepareTestFunc: func(repo *PostgreSQLSyncedSecretRepository) {
+			prepareTestFunc: func(repo *SyncedSecretRepository) {
 				suite.insertTestSecret(secret)
 			},
-			functionToExecute: func(repo *PostgreSQLSyncedSecretRepository) (any, error) {
+			functionToExecute: func(repo *SyncedSecretRepository) (any, error) {
 				return nil, repo.DeleteSyncedSecret(secret.SecretBackend, secret.SecretPath, secret.DestinationCluster)
 			},
 		},
@@ -526,7 +526,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 	suite.Run("automatically retry to execute the operation", func() {
 		for _, test := range tests {
 			suite.Run(test.name, func() {
-				repo := &PostgreSQLSyncedSecretRepository{
+				repo := &SyncedSecretRepository{
 					psql:           suite.db,
 					circuitBreaker: createFastFailCircuitBreaker(),
 					retryOptFunc:   newBackoffStrategy,
@@ -552,7 +552,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 	suite.Run("circuit breaker opens on operation failures", func() {
 		for _, test := range tests {
 			suite.Run(test.name, func() {
-				repo := &PostgreSQLSyncedSecretRepository{
+				repo := &SyncedSecretRepository{
 					psql:           suite.db,
 					circuitBreaker: createFastFailCircuitBreaker(),
 					retryOptFunc:   createConstantBackoffRetryFunc(100*time.Millisecond, 1),
@@ -578,7 +578,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 	suite.Run("circuit breaker closes after time passes", func() {
 		for _, test := range tests {
 			suite.Run(test.name, func() {
-				repo := &PostgreSQLSyncedSecretRepository{
+				repo := &SyncedSecretRepository{
 					psql:           suite.db,
 					circuitBreaker: createFastFailCircuitBreaker(),
 					retryOptFunc:   createConstantBackoffRetryFunc(100*time.Millisecond, 1),
@@ -612,7 +612,7 @@ func (suite *SyncedSecretRepositoryTestSuite) TestFailureWithCircuitBreakerAndRe
 	})
 
 	suite.Run("circuit breaker affects calls to other functions", func() {
-		repo := &PostgreSQLSyncedSecretRepository{
+		repo := &SyncedSecretRepository{
 			psql:           suite.db,
 			circuitBreaker: createFastFailCircuitBreaker(),
 			retryOptFunc:   createConstantBackoffRetryFunc(100*time.Millisecond, 1),

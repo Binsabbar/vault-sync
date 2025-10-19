@@ -85,6 +85,7 @@ func (o *replicaSyncHandler[T]) syncSingleCluster(destinationCluster string) {
 		}
 	}
 
+	//nolint:errcheck
 	o.execute(destinationCluster, result.(T))
 }
 
@@ -95,7 +96,11 @@ func (o *replicaSyncHandler[T]) execute(destinationCluster string, syncResult T)
 	if hasError {
 		syncResult.SetErrorMessage(&errorMsg)
 		syncResult.SetStatus(models.StatusFailed)
-		o.logger.Error().Err(err).Msg(fmt.Sprintf("Failed to %s secret to replica cluster: %s", o.operationType, destinationCluster))
+		o.logger.Error().
+			Err(err).
+			Msg(fmt.Sprintf(
+				"Failed to %s secret to replica cluster: %s", o.operationType, destinationCluster,
+			))
 		return
 	}
 
