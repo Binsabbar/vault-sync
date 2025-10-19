@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 'v[0-9]+.[0-9]+.[0-9]+-dev'
-      
+      - "v[0-9]+.[0-9]+.[0-9]+-dev"
 
 permissions:
   contents: read
@@ -29,15 +28,14 @@ jobs:
       - name: Set up Go 1.24
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
       - name: Install dependencies
         run: go mod tidy
-      - name: Install GoReleaser
-        run: |
-          curl -sL https://github.com/goreleaser/goreleaser/releases/download/v2.6.1/goreleaser_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin goreleaser
-      - name: Run snapshot build with Makefile
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: ~> v2
+          args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
-          DOCKER_REGISTRY: ghcr.io
-        run: make release-snapshot
