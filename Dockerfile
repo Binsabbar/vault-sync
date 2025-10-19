@@ -1,5 +1,5 @@
 # Start with the official Go image for building the application
-FROM golang:1.25 as builder
+FROM golang:1.24 AS builder
 
 # Set the working directory inside the container
 WORKDIR /app/vault-sync
@@ -7,7 +7,8 @@ WORKDIR /app/vault-sync
 # Copy the Go modules manifests
 COPY . /app/vault-sync/
 
-RUN go mod verify && go mod tidy
+RUN go mod verify
+RUN go mod tidy
 
 # Build the Go application
 RUN CGO_ENABLED=0 GOOS=linux go build -o vault-sync
