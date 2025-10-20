@@ -10,6 +10,7 @@ on:
       - '**/*.mod'
       - '**/*.sum'
       - '.golangci.yml'
+      - 'Makefile'
     branches-ignore:
       - 'main'
       - 'master'
@@ -23,6 +24,7 @@ on:
       - '**/*.mod'
       - '**/*.sum'
       - '.golangci.yml'
+      - 'Makefile'
     branches:
       - 'main'
       - 'master'
