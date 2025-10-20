@@ -6,6 +6,13 @@ DOCKER_IMAGE=vault-sync
 DOCKER_TAG=latest
 MAIN_PATH=./main.go
 
+# Docker variables
+DOCKER_REGISTRY ?= ghcr.io
+DOCKER_IMAGE_NAME ?= binsabbar/vault-sync
+VERSION ?= latest
+
+export GITHUB_REPOSITORY_OWNER ?= binsabbar
+
 # Colors for output
 RED=\033[0;31m
 GREEN=\033[0;32m
@@ -118,6 +125,23 @@ docker-build:
 	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) . 
 	@echo "$(GREEN)✓ Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)$(NC)"
 
+## docker-build: Build Docker image
+docker-build:
+    @echo "$(BLUE)Building Docker image...$(NC)"
+    docker build -t $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) .
+    docker tag $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
+    @echo "$(GREEN)✓ Docker image built$(NC)"
+
+## docker-push: Push Docker image to registry
+docker-push:
+    @echo "$(BLUE)Pushing Docker image...$(NC)"
+    docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION)
+    docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
+    @echo "$(GREEN)✓ Docker image pushed$(NC)"
+
+## docker-build-and-push: Build and push Docker image
+docker-build-and-push: docker-build docker-push
+
 ### Useful commands for local development with Docker Compose
 docker-up-deps-services:
 	@echo "$(BLUE)Starting services...$(NC)"
@@ -179,8 +203,6 @@ setup:
 	@echo "$(GREEN)✓ Setup complete! Use 'make docker-deps-logs' or `make docker-app-logs` to view logs$(NC)"
 
 
-export GITHUB_REPOSITORY_OWNER ?= binsabbar
-export DOCKER_REGISTRY ?= ghcr.io
 
 ## release: Create a new release with GoReleaser
 release:
