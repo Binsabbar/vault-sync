@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"vault-sync/internal/config"
 
@@ -516,51 +517,64 @@ func SetupExistingClusters(
 
 	handleErrorsChan("SetupExistingClusters", errors, len(helpers))
 
-	mainConfig := (*config.VaultClusterConfig)(nil)
-	if mainCluster != nil {
-		mainConfig = &config.VaultClusterConfig{
-			Name:          mainCluster.Config.ClusterName,
-			Address:       mainCluster.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
-		}
-		mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(
-			ctx,
-			"main",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
-	}
+	wg := new(sync.WaitGroup)
+	wg.Add(3)
 
-	replica1Config := (*config.VaultClusterConfig)(nil)
-	if replica1 != nil {
-		replica1Config = &config.VaultClusterConfig{
-			Name:          replica1.Config.ClusterName,
-			Address:       replica1.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
+	var mainConfig *config.VaultClusterConfig
+	go func() {
+		if mainCluster != nil {
+			mainConfig = &config.VaultClusterConfig{
+				Name:          mainCluster.Config.ClusterName,
+				Address:       mainCluster.Config.Address,
+				AppRoleMount:  "approle",
+				TLSSkipVerify: true,
+			}
+			mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(
+				ctx,
+				"main",
+				mounts...)
+			checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
 		}
-		replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(
-			ctx,
-			"replica-1",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
-	}
+		wg.Done()
+	}()
 
-	replica2Config := (*config.VaultClusterConfig)(nil)
-	if replica2 != nil {
-		replica2Config = &config.VaultClusterConfig{
-			Name:          replica2.Config.ClusterName,
-			Address:       replica2.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
+	var replica1Config *config.VaultClusterConfig
+	go func() {
+		if replica1 != nil {
+			replica1Config = &config.VaultClusterConfig{
+				Name:          replica1.Config.ClusterName,
+				Address:       replica1.Config.Address,
+				AppRoleMount:  "approle",
+				TLSSkipVerify: true,
+			}
+			replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(
+				ctx,
+				"replica-1",
+				mounts...)
+			checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
 		}
-		replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(
-			ctx,
-			"replica-2",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
-	}
+		wg.Done()
+	}()
 
+	var replica2Config *config.VaultClusterConfig
+	go func() {
+		if replica2 != nil {
+			replica2Config = &config.VaultClusterConfig{
+				Name:          replica2.Config.ClusterName,
+				Address:       replica2.Config.Address,
+				AppRoleMount:  "approle",
+				TLSSkipVerify: true,
+			}
+			replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(
+				ctx,
+				"replica-2",
+				mounts...)
+			checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
+		}
+		wg.Done()
+
+	}()
+	wg.Wait()
 	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
 
 }
