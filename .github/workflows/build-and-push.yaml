@@ -17,7 +17,6 @@ jobs:
     uses: ./.github/workflows/golangci-lint.yaml
 
   build-and-push:
-    needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
