@@ -122,12 +122,6 @@ go-fmt-check:
 ## docker-build: Build Docker image
 docker-build:
 	@echo "$(BLUE)Building Docker image...$(NC)"
-	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) . 
-	@echo "$(GREEN)✓ Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)$(NC)"
-
-## docker-build: Build Docker image
-docker-build:
-	@echo "$(BLUE)Building Docker image...$(NC)"
 	docker build -t $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) .
 	docker tag $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
 	@echo "$(GREEN)✓ Docker image built$(NC)"
