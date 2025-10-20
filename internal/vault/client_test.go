@@ -51,18 +51,6 @@ func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
 	testutil.QuickResetClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
 }
 
-func (suite *MultiClusterVaultClientTestSuite) handleTestSetUpTearDownErrors(errors chan error, expectedCount int) {
-	for i := 0; i < expectedCount; i++ {
-		select {
-		case err := <-errors:
-			if err != nil {
-				suite.FailNow("Error during test setup/teardown", err.Error())
-			}
-		case <-time.After(10 * time.Second):
-			suite.FailNow("Timed out waiting for vault helpers to terminate")
-		}
-	}
-}
 
 func TestMultiClusterVaultClientSuite(t *testing.T) {
 	if os.Getenv("SKIP_INTEGRATION_TESTS") == "true" {
