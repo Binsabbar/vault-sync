@@ -1,0 +1,167 @@
+name: release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'releases/v[0-9]+.[0-9]+.[0-9]+'
+      - 'releases/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+      - 'releases/v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
+      - 'releases/v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Release branch name (e.g., releases/v1.2.3)'
+        required: true
+        type: string
+      pr_number:
+        description: 'PR number (optional, for context)'
+        required: false
+        type: string
+
+jobs:
+  # Run tests on PR to release branch
+  test:
+    # Only run if PR was actually merged (not just closed)
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/test.yaml
+
+  # Run linting on PR to release branch
+  lint:
+    # Only run if PR was actually merged (not just closed)
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/golangci-lint.yaml
+
+  # Create release automatically when PR is merged
+  release:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # For PR merges, checkout the merge commit on the target branch
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref }}
+
+      - name: Extract version from branch name
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Manual trigger with branch input
+            BRANCH="${{ github.event.inputs.branch }}"
+            TRIGGER="Manual workflow dispatch"
+          else
+            # PR merged into release branch
+            BRANCH="${{ github.event.pull_request.base.ref }}"
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            TRIGGER="PR #${PR_NUMBER} merged: ${PR_TITLE}"
+          fi
+          
+          # Extract version from branch name (releases/v1.2.3 -> v1.2.3)
+          VERSION=$(echo "${BRANCH}" | sed 's|^releases/||')
+          
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "🚀 Preparing release for version: ${VERSION}"
+          echo "📦 From branch: ${BRANCH}"
+          echo "🔀 Triggered by: ${TRIGGER}"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.get_version.outputs.version }}
+
+      - name: Extract CHANGELOG for version
+        id: changelog
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          # Remove 'v' prefix for CHANGELOG lookup
+          VERSION_NUM=${VERSION#v}
+          
+          # Extract changelog section for this version
+          CHANGELOG_CONTENT=$(awk "/## \[${VERSION_NUM}\]/,/## \[/" CHANGELOG.md | sed '1d;$d' || true)
+          
+          # If changelog is empty, use a default message
+          if [ -z "$CHANGELOG_CONTENT" ]; then
+            CHANGELOG_CONTENT="Release ${VERSION}"
+          fi
+          
+          # Save to file for multiline output
+          echo "$CHANGELOG_CONTENT" > /tmp/changelog.txt
+          echo "changelog_file=/tmp/changelog.txt" >> $GITHUB_OUTPUT
+          
+          echo "📝 Changelog extracted for version ${VERSION}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker images
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          make docker-build-and-push VERSION=${VERSION}
+        env:
+          DOCKER_REGISTRY: ghcr.io
+          DOCKER_IMAGE_NAME: ${{ github.repository }}
+
+      - name: Create GitHub Release with Tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.changelog_file }}
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.version, '-rc') || contains(steps.get_version.outputs.version, '-beta') || contains(steps.get_version.outputs.version, '-alpha') }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          generate_release_notes: true
+          append_body: true
+          make_latest: ${{ !contains(steps.get_version.outputs.version, '-rc') && !contains(steps.get_version.outputs.version, '-beta') && !contains(steps.get_version.outputs.version, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Summary
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          echo "✅ Release ${VERSION} created successfully!"
+          echo "📦 GitHub Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+          echo "🐳 Docker Image: ghcr.io/${{ github.repository }}:${VERSION}"
+          if [[ "${VERSION}" != *"-rc"* ]] && [[ "${VERSION}" != *"-beta"* ]] && [[ "${VERSION}" != *"-alpha"* ]]; then
+            echo "🐳 Docker Latest: ghcr.io/${{ github.repository }}:latest"
+          fi
+          
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "🔀 Released from PR #${{ github.event.pull_request.number }}"
+            echo "👤 Merged by: ${{ github.event.pull_request.merged_by.login }}"
+          fi
