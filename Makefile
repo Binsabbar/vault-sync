@@ -127,17 +127,17 @@ docker-build:
 
 ## docker-build: Build Docker image
 docker-build:
-    @echo "$(BLUE)Building Docker image...$(NC)"
-    docker build -t $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) .
-    docker tag $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
-    @echo "$(GREEN)✓ Docker image built$(NC)"
+	@echo "$(BLUE)Building Docker image...$(NC)"
+	docker build -t $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) .
+	docker tag $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
+	@echo "$(GREEN)✓ Docker image built$(NC)"
 
 ## docker-push: Push Docker image to registry
 docker-push:
-    @echo "$(BLUE)Pushing Docker image...$(NC)"
-    docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION)
-    docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
-    @echo "$(GREEN)✓ Docker image pushed$(NC)"
+	@echo "$(BLUE)Pushing Docker image...$(NC)"
+	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):$(VERSION)
+	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE_NAME):latest
+	@echo "$(GREEN)✓ Docker image pushed$(NC)"
 
 ## docker-build-and-push: Build and push Docker image
 docker-build-and-push: docker-build docker-push
