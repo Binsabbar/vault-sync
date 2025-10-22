@@ -37,6 +37,7 @@ func (suite *MultiClusterVaultClientTestSuite) SetupSuite() {
 }
 
 func (suite *MultiClusterVaultClientTestSuite) SetupSubTest() {
+	testutil.QuickResetClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
 	suite.mainConfig, suite.replicaConfig = testutil.SetupExistingClusters(
 		suite.mainVault,
 		suite.replica1Vault,
@@ -51,9 +52,9 @@ func (suite *MultiClusterVaultClientTestSuite) TearDownSuite() {
 	suite.replica2Vault = nil
 }
 
-func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
-	testutil.QuickResetClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
-}
+// func (suite *MultiClusterVaultClientTestSuite) TearDownSubTest() {
+// 	testutil.QuickResetClusters(suite.mainVault, suite.replica1Vault, suite.replica2Vault, mounts...)
+// }
 
 func TestMultiClusterVaultClientSuite(t *testing.T) {
 	if os.Getenv("SKIP_INTEGRATION_TESTS") == "true" {
@@ -308,7 +309,6 @@ func (suite *MultiClusterVaultClientTestSuite) TestGetKeysUnderMount() {
 		suite.NoError(err)
 
 		keys, err := client.GetKeysUnderMount(suite.ctx, mounts[0], func(path string, isFinalPath bool) bool {
-			fmt.Println("Checking path:", path)
 			return path != "production/infra/grafana" && path != "stage/app/app1"
 		})
 
@@ -490,8 +490,8 @@ func (suite *MultiClusterVaultClientTestSuite) TestSecretExists() {
 			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err)
 
-			twoSeconds := 2 * time.Second
-			suite.mainVault.Stop(suite.ctx, &twoSeconds)
+			timeout := 2 * time.Second
+			suite.mainVault.Stop(suite.ctx, &timeout)
 
 			exists, err := client.SecretExists(suite.ctx, mount, keyPath)
 
@@ -536,7 +536,6 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		for _, params := range assertionParams {
 			cluster := params.vaultHelper.Config.ClusterName
 			result := params.result
-			fmt.Println("Assertion for Result for cluster:", cluster, "Status:", result.Status)
 			suite.NotNil(result)
 
 			data, version, _ := params.vaultHelper.ReadSecretData(suite.ctx, params.mount, params.keypath)
@@ -593,8 +592,8 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, []*config.VaultClusterConfig{})
 		suite.NoError(err)
 
-		twoSeconds := 2 * time.Second
-		suite.replica2Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 2 being unavailable
+		timeout := 2 * time.Second
+		suite.replica2Vault.Stop(suite.ctx, &timeout) // Simulate replica 2 being unavailable
 		results, err := client.SyncSecretToReplicas(suite.ctx, mount, keyPath)
 
 		suite.NoError(err)
@@ -606,9 +605,10 @@ func (suite *MultiClusterVaultClientTestSuite) TestSyncSecretToReplicas() {
 		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 		suite.NoError(err)
 
-		twoSeconds := 2 * time.Second
-		suite.replica1Vault.Stop(suite.ctx, &twoSeconds)
-		suite.replica2Vault.Stop(suite.ctx, &twoSeconds)
+		timeout := 100 * time.Millisecond
+		suite.replica1Vault.Stop(suite.ctx, &timeout)
+		suite.replica2Vault.Stop(suite.ctx, &timeout)
+
 		results, err := client.SyncSecretToReplicas(suite.ctx, mount, keyPath)
 
 		suite.NoError(err)
@@ -692,7 +692,6 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 		for _, params := range assertionParams {
 			cluster := params.vaultHelper.Config.ClusterName
 			result := params.result
-			fmt.Println("Assertion for Result for cluster:", cluster, "Status:", result.Status)
 			suite.NotNil(result)
 
 			_, _, err := params.vaultHelper.ReadSecretData(suite.ctx, params.mount, params.keypath)
@@ -782,9 +781,9 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 		client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 		suite.NoError(err)
 
-		twoSeconds := 2 * time.Second
-		suite.replica1Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 1 being unavailable
-		suite.replica2Vault.Stop(suite.ctx, &twoSeconds) // Simulate replica 2 being unavailable
+		timeout := 2 * time.Second
+		suite.replica1Vault.Stop(suite.ctx, &timeout) // Simulate replica 1 being unavailable
+		suite.replica2Vault.Stop(suite.ctx, &timeout) // Simulate replica 2 being unavailable
 
 		results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
 
@@ -837,8 +836,8 @@ func (suite *MultiClusterVaultClientTestSuite) TestDeleteSecretFromReplicas() {
 			client, err := NewMultiClusterVaultClient(suite.ctx, suite.mainConfig, suite.replicaConfig)
 			suite.NoError(err)
 
-			twoSeconds := 2 * time.Second
-			suite.replica2Vault.Stop(suite.ctx, &twoSeconds)
+			timeout := 2 * time.Second
+			suite.replica2Vault.Stop(suite.ctx, &timeout)
 
 			results, err := client.DeleteSecretFromReplicas(suite.ctx, mount, keyPath)
 
