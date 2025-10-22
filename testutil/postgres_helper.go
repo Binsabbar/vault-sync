@@ -35,7 +35,11 @@ func NewPostgresContainer(t require.TestingT, ctx context.Context) (*PostgresHel
 	return newPostgresContainerWithFixedPort(t, ctx, fmt.Sprintf("%d", randomPort))
 }
 
-func newPostgresContainerWithFixedPort(t require.TestingT, ctx context.Context, hostPort string) (*PostgresHelper, error) {
+func newPostgresContainerWithFixedPort(
+	t require.TestingT,
+	ctx context.Context,
+	hostPort string,
+) (*PostgresHelper, error) {
 	dbUser := "testuser"
 	dbPassword := "testpassword"
 	dbName := "test_db"
@@ -49,7 +53,11 @@ func newPostgresContainerWithFixedPort(t require.TestingT, ctx context.Context, 
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithStartupTimeout(1*time.Minute),
-			wait.ForExposedPort().WithStartupTimeout(1*time.Minute),
+			wait.ForExposedPort().WithStartupTimeout(30*time.Second),
+		),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("5432/tcp").
+				WithStartupTimeout(10*time.Second),
 		),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.PortBindings = nat.PortMap{nat.Port("5432/tcp"): []nat.PortBinding{{HostPort: hostPort}}}
