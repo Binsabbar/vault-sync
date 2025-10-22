@@ -47,6 +47,12 @@ type VaultClusterConfig struct {
 	AppRoleMount  string `mapstructure:"app_role_mount"`
 	TLSSkipVerify bool   `mapstructure:"tls_skip_verify" validate:"boolean"`
 	TLSCertFile   string `mapstructure:"tls_cert_file"   validate:"omitempty,filepath"`
+
+	//TODO the following is not used in the application and set to default vaules by vault client
+	// This is added for testing
+	RetryMax     int // TODO `mapstructure:"retry_max"       validate:"omitempty,gt=0"`
+	RetryWaitMin int // TODO `mapstructure:"retry_wait_min"  validate:"omitempty,gt=0"`
+	RetryWaitMax int // TODO `mapstructure:"retry_wait_max"  validate:"omitempty,gt=-0"`
 }
 
 type SyncRule struct {
