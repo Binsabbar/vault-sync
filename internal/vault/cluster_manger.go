@@ -38,9 +38,29 @@ func newClusterManager(cfg *config.VaultClusterConfig) (*clusterManager, error) 
 		}
 	}
 
+	// TODO add retry options to VaultClusterConfig
+	retryMax := cfg.RetryMax
+	retryWaitMin := time.Duration(cfg.RetryWaitMin)
+	retryWaitMax := time.Duration(cfg.RetryWaitMax)
+
+	if retryMax == 0 {
+		retryMax = vault.DefaultConfiguration().RetryConfiguration.RetryMax
+	}
+	if retryWaitMin == 0 {
+		retryWaitMin = vault.DefaultConfiguration().RetryConfiguration.RetryWaitMin
+	}
+	if retryWaitMax == 0 {
+		retryWaitMax = vault.DefaultConfiguration().RetryConfiguration.RetryWaitMax
+	}
+
 	client, err := vault.New(
 		vault.WithAddress(cfg.Address),
 		vault.WithTLS(tlsConfig),
+		vault.WithRetryConfiguration(vault.RetryConfiguration{
+			RetryWaitMin: retryWaitMin,
+			RetryWaitMax: retryWaitMax,
+			RetryMax:     retryMax,
+		}),
 	)
 
 	if err != nil {

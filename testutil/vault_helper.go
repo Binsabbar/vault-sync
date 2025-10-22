@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"vault-sync/internal/config"
 
@@ -76,7 +77,7 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 		testcontainers.WithWaitStrategy(
 			wait.ForHTTP("/v1/sys/health").
 				WithPort("8200/tcp").
-				WithStartupTimeout(30*time.Second),
+				WithStartupTimeout(10*time.Second),
 			wait.ForExposedPort().WithStartupTimeout(1*time.Minute)),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.PortBindings = nat.PortMap{nat.Port("8200/tcp"): []nat.PortBinding{{HostPort: hostPort}}}
@@ -201,10 +202,15 @@ func (v *VaultHelper) CreateApproleWithReadPermissions(
 			)
 		}
 		policy := strings.Join(policyPaths, "\n")
-		if _, err := v.ExecuteVaultCommand(ctx, fmt.Sprintf("vault policy write readwrite-%s -<<EOF\n%s\nEOF", mount, policy)); err != nil {
+		if _, err := v.ExecuteVaultCommand(
+			ctx,
+			fmt.Sprintf("vault policy write readwrite-%s -<<EOF\n%s\nEOF", mount, policy),
+		); err != nil {
 			return "", "", err
 		}
-		if _, err := v.createAppRole(ctx, approle, []string{fmt.Sprintf("readwrite-%s", mount)}); err != nil {
+		if _, err := v.createAppRole(
+			ctx, approle, []string{fmt.Sprintf("readwrite-%s", mount)},
+		); err != nil {
 			return "", "", err
 		}
 	}
@@ -317,6 +323,7 @@ func (v *VaultHelper) QuickReset(ctx context.Context, mounts ...string) error {
 
 	return nil
 }
+
 func (v *VaultHelper) ListKeys(ctx context.Context, mount, path string) ([]string, error) {
 	cmd := fmt.Sprintf("vault kv list -format=json %s/%s", mount, path)
 	output, err := v.ExecuteVaultCommand(ctx, cmd)
@@ -375,14 +382,6 @@ func (v *VaultHelper) ExecuteVaultCommand(ctx context.Context, command string) (
 	return string(byteOutput), nil
 }
 
-func formatDataForVault(data map[string]string) string {
-	var formatted []string
-	for key, value := range data {
-		formatted = append(formatted, fmt.Sprintf("%s=%v", key, value))
-	}
-	return strings.Join(formatted, " ")
-}
-
 func (v *VaultHelper) createAppRole(ctx context.Context, roleName string, policies []string) (string, error) {
 	cmd := fmt.Sprintf("vault write auth/approle/role/%s policies=%s", roleName, strings.Join(policies, ","))
 	return v.ExecuteVaultCommand(ctx, cmd)
@@ -398,6 +397,14 @@ func (v *VaultHelper) getAppRoleIDAndSecret(ctx context.Context, approle string)
 		return "", "", fmt.Errorf("failed to get AppRole secret: %w", err)
 	}
 	return role_id, role_secret, nil
+}
+
+func formatDataForVault(data map[string]string) string {
+	var formatted []string
+	for key, value := range data {
+		formatted = append(formatted, fmt.Sprintf("%s=%v", key, value))
+	}
+	return strings.Join(formatted, " ")
 }
 
 func extractSecretDataFromResponse(jsonStr string) (secretData map[string]string, version int64, err error) {
@@ -473,96 +480,59 @@ func SetupOneMainTwoReplicaClusters(mounts ...string) *QuickVaultHelperSetup {
 	return result
 }
 
-func checkErrorP(msg string, err error) {
-	if err != nil {
-		panic(fmt.Sprintf(msg, err))
-	}
-}
-
 func SetupExistingClusters(
 	mainCluster *VaultHelper,
 	replica1 *VaultHelper,
 	replica2 *VaultHelper,
 	mounts ...string,
 ) (*config.VaultClusterConfig, []*config.VaultClusterConfig) {
-	ctx := context.Background()
+
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
-	errors := make(chan error, len(helpers))
-	var err error
+	results := make(chan clusterSetupResult, len(helpers))
+	var wg sync.WaitGroup
 
 	for _, vaultHelper := range helpers {
+		wg.Add(1)
+		if vaultHelper == nil {
+			results <- clusterSetupResult{
+				name: "",
+				err:  nil,
+			}
+			wg.Done()
+			continue
+		}
 		go func(vaultHelper *VaultHelper) {
-			if vaultHelper == nil {
-				errors <- nil
-				return
-			}
-			err := vaultHelper.Start(ctx)
-			if err != nil {
-				errors <- fmt.Errorf("failed to start vault helper: %w", err)
-				return
-			}
-			err1 := vaultHelper.EnableAppRoleAuth(ctx)
-			err2 := vaultHelper.EnableKVv2Mounts(ctx, mounts...)
-			if err1 != nil {
-				errors <- fmt.Errorf("failed to enable AppRole auth method: %w", err1)
-				return
-			} else if err2 != nil {
-				errors <- fmt.Errorf("failed to enable KV v2 mounts: %w", err2)
-				return
-			}
-			errors <- nil
+			defer wg.Done()
+			setupSingleCluster(vaultHelper, results, mounts...)
 		}(vaultHelper)
 	}
 
-	handleErrorsChan("SetupExistingClusters", errors, len(helpers))
-
 	var mainConfig *config.VaultClusterConfig
-	if mainCluster != nil {
-		mainConfig = &config.VaultClusterConfig{
-			Name:          mainCluster.Config.ClusterName,
-			Address:       mainCluster.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
+	var replicasConfig []*config.VaultClusterConfig
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for {
+		select {
+		case res, ok := <-results:
+			if !ok {
+				return mainConfig, replicasConfig
+			}
+			if res.err != nil {
+				panic(fmt.Sprintf("Error setting up cluster %s: %v", res.name, res.err))
+			}
+			if mainCluster != nil && res.name == mainCluster.Config.ClusterName {
+				mainConfig = res.config
+			} else {
+				replicasConfig = append(replicasConfig, res.config)
+			}
+		case <-time.After(5 * time.Second):
+			panic("Timed out waiting for vault cluster setup")
 		}
-		mainConfig.AppRoleID, mainConfig.AppRoleSecret, err = mainCluster.CreateApproleWithReadPermissions(
-			ctx,
-			"main",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read permissions on main cluster: %v", err)
 	}
-
-	var replica1Config *config.VaultClusterConfig
-	if replica1 != nil {
-		replica1Config = &config.VaultClusterConfig{
-			Name:          replica1.Config.ClusterName,
-			Address:       replica1.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
-		}
-		replica1Config.AppRoleID, replica1Config.AppRoleSecret, err = replica1.CreateApproleWithRWPermissions(
-			ctx,
-			"replica-1",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read/write permissions on replica-1 cluster: %v", err)
-	}
-
-	var replica2Config *config.VaultClusterConfig
-
-	if replica2 != nil {
-		replica2Config = &config.VaultClusterConfig{
-			Name:          replica2.Config.ClusterName,
-			Address:       replica2.Config.Address,
-			AppRoleMount:  "approle",
-			TLSSkipVerify: true,
-		}
-		replica2Config.AppRoleID, replica2Config.AppRoleSecret, err = replica2.CreateApproleWithRWPermissions(
-			ctx,
-			"replica-2",
-			mounts...)
-		checkErrorP("Failed to create AppRole with read/write permissions on replica-2 cluster: %v", err)
-	}
-
-	return mainConfig, []*config.VaultClusterConfig{replica1Config, replica2Config}
 }
 
 func TerminateAllClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper) {
@@ -627,6 +597,75 @@ func TruncateSecrets(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *
 		}(helper)
 	}
 	handleErrorsChan("TruncateSecrets", errors, 3)
+}
+
+type clusterSetupResult struct {
+	name   string
+	config *config.VaultClusterConfig
+	err    error
+}
+
+func setupSingleCluster(vaultHelper *VaultHelper, results chan clusterSetupResult, mounts ...string) {
+	name := vaultHelper.Config.ClusterName
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := vaultHelper.Start(ctx); err != nil {
+		results <- clusterSetupResult{
+			name: name,
+			err:  fmt.Errorf("failed to start vault helper: %w", err),
+		}
+		return
+	}
+
+	if err := vaultHelper.EnableAppRoleAuth(ctx); err != nil {
+		results <- clusterSetupResult{
+			name: name,
+			err:  fmt.Errorf("failed to enable AppRole auth method: %w", err),
+		}
+		return
+	}
+
+	if err := vaultHelper.EnableKVv2Mounts(ctx, mounts...); err != nil {
+		results <- clusterSetupResult{
+			name: name,
+			err:  fmt.Errorf("failed to enable KV v2 mounts: %w", err),
+		}
+		return
+	}
+
+	var appRoleCreationFunc func(_ context.Context, _ string, _ ...string) (string, string, error)
+	if vaultHelper.Config.ClusterName == "main-cluster" {
+		appRoleCreationFunc = vaultHelper.CreateApproleWithReadPermissions
+	} else {
+		appRoleCreationFunc = vaultHelper.CreateApproleWithRWPermissions
+	}
+
+	if roleId, secret, err := appRoleCreationFunc(
+		ctx, name, mounts...,
+	); err != nil {
+		results <- clusterSetupResult{
+			name: name,
+			err:  fmt.Errorf("failed to create AppRole with read permissions: %w", err),
+		}
+	} else {
+		results <- clusterSetupResult{
+			name: name,
+			config: &config.VaultClusterConfig{
+				Name:          vaultHelper.Config.ClusterName,
+				Address:       vaultHelper.Config.Address,
+				TLSSkipVerify: true,
+				AppRoleMount:  "approle",
+				AppRoleID:     roleId,
+				AppRoleSecret: secret,
+				// the following improve test speed by reducing retry wait times
+				RetryMax:     1,
+				RetryWaitMin: 100,
+				RetryWaitMax: 150,
+			},
+			err: nil,
+		}
+	}
 }
 
 func handleErrorsChan(context string, errors chan error, expectedCount int) {
