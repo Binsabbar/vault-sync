@@ -77,8 +77,8 @@ func newVaultContainerWithFixedPort(ctx context.Context, clusterName string, hos
 		testcontainers.WithWaitStrategy(
 			wait.ForHTTP("/v1/sys/health").
 				WithPort("8200/tcp").
-				WithStartupTimeout(10*time.Second),
-			wait.ForExposedPort().WithStartupTimeout(1*time.Minute)),
+				WithStartupTimeout(60*time.Second),
+			wait.ForExposedPort().WithStartupTimeout(60*time.Second)),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.PortBindings = nat.PortMap{nat.Port("8200/tcp"): []nat.PortBinding{{HostPort: hostPort}}}
 		}),
