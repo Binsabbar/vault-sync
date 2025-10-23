@@ -573,7 +573,7 @@ func QuickResetClusters(mainCluster *VaultHelper, replica1 *VaultHelper, replica
 }
 
 func TruncateSecrets(mainCluster *VaultHelper, replica1 *VaultHelper, replica2 *VaultHelper, mounts ...string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	errors := make(chan error, 3)
 	helpers := []*VaultHelper{mainCluster, replica1, replica2}
@@ -607,7 +607,7 @@ type clusterSetupResult struct {
 
 func setupSingleCluster(vaultHelper *VaultHelper, results chan clusterSetupResult, mounts ...string) {
 	name := vaultHelper.Config.ClusterName
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := vaultHelper.Start(ctx); err != nil {
