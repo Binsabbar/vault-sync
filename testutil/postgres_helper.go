@@ -45,19 +45,25 @@ func newPostgresContainerWithFixedPort(
 	dbName := "test_db"
 
 	pgContainer, err := postgres.Run(ctx,
-		"postgres:15-alpine",
+		"postgres:16-alpine",
 		postgres.WithDatabase(dbName),
 		postgres.WithUsername(dbUser),
 		postgres.WithPassword(dbPassword),
 		postgres.WithSQLDriver("pgx"),
 		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithStartupTimeout(1*time.Minute),
-			wait.ForExposedPort().WithStartupTimeout(30*time.Second),
-		),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("5432/tcp").
-				WithStartupTimeout(60*time.Second),
+			wait.ForAll(
+				wait.ForListeningPort("5432/tcp").WithStartupTimeout(30*time.Second),
+				wait.ForSQL("5432/tcp", "postgres", func(host string, port nat.Port) string {
+					return fmt.Sprintf(
+						"host=%s port=%s user=testuser password=testpassword dbname=test_db sslmode=disable",
+						host,
+						port.Port(),
+					)
+				}).WithStartupTimeout(30*time.Second),
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).
+					WithStartupTimeout(30*time.Second),
+			),
 		),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.PortBindings = nat.PortMap{nat.Port("5432/tcp"): []nat.PortBinding{{HostPort: hostPort}}}

@@ -73,18 +73,24 @@ go-build:
 ## test: Run all tests
 ## test: Run tests silently  
 go-test:
+	@echo "$(BLUE)Clearing test cache...$(NC)"
+	@go clean -testcache
 	@echo "$(BLUE)Running all tests...$(NC)"
 	@TEST_SILENT=1 go test ./...
 	@echo "$(GREEN)✓ Tests completed$(NC)"
 
 ## test-verbose: Run tests with logs
 go-test-verbose:
+	@echo "$(BLUE)Clearing test cache...$(NC)"
+	@go clean -testcache
 	@echo "$(BLUE)Running all tests (verbose)...$(NC)"
 	@go test -v ./...
 	@echo "$(GREEN)✓ Tests completed$(NC)"
 
 go-test-coverage:
-	@echo "$(BLUE)Running all tests...$(NC)"
+	@echo "$(BLUE)Clearing test cache...$(NC)"
+	@go clean -testcache
+	@echo "$(BLUE)Running all tests with coverage...$(NC)"
 	@TEST_SILENT=1 go test -race -timeout 5m -cover ./...
 	@echo "$(GREEN)✓ Tests completed$(NC)"
 
