@@ -57,7 +57,7 @@ func newPostgresContainerWithFixedPort(
 		),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("5432/tcp").
-				WithStartupTimeout(10*time.Second),
+				WithStartupTimeout(60*time.Second),
 		),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.PortBindings = nat.PortMap{nat.Port("5432/tcp"): []nat.PortBinding{{HostPort: hostPort}}}
