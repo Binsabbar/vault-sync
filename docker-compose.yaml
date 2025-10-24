@@ -1,0 +1,97 @@
+
+services:
+  app:
+    image: vault-sync:latest
+    command: ["sync", "--config", "/tmp/sample-config.yaml"]
+    volumes:
+      - ./sample-config-docker.yaml:/tmp/sample-config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault1:
+        condition: service_started
+      vault2:
+        condition: service_started
+    networks:
+      - default
+      - vault1-net
+      - vault2-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: vault_db
+      POSTGRES_USER: vault_role
+      POSTGRES_PASSWORD: vault_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault_role -d vault_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - default
+
+  vault1:
+    image: hashicorp/vault:1.15
+    container_name: vault1
+    environment:
+      VAULT_API_ADDR: "http://vault1:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault1-data:/vault/file
+      - ./docker/vault-config.hcl:/tmp/vault-config.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      vault1-net:
+          aliases:
+            - vault1
+    entrypoint: >
+      /bin/sh -c "
+      cp /tmp/vault-config.hcl /vault/file/config.hcl &&
+      vault server -config=/vault/file/config.hcl
+      "
+  vault2:
+    image: hashicorp/vault:1.15
+    container_name: vault2
+    environment:
+      VAULT_API_ADDR: "http://vault2:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    ports:
+      - "8300:8200"
+    volumes:
+      - vault2-data:/vault/file
+      - ./docker/vault-config.hcl:/tmp/vault-config.hcl:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      vault2-net:
+          aliases:
+            - vault2
+    entrypoint: >
+      /bin/sh -c "
+      cp /tmp/vault-config.hcl /vault/file/config.hcl &&
+      vault server -config=/vault/file/config.hcl
+      "
+
+volumes:
+  vault1-data:
+  vault2-data:
+  postgres-data:
+
+networks:
+  default:
+    driver: bridge
+  vault1-net:
+    driver: bridge
+  vault2-net:
+    driver: bridge

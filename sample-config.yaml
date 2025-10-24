@@ -1,0 +1,52 @@
+# id is the unique identifier for sync service
+id: test
+log_level: info
+concurrency: 5
+
+sync_rule:
+  interval: 60s
+  kv_mounts:
+    - secret
+  paths_to_replicate: []
+  paths_to_ignore: []
+
+
+postgres:
+  # address is the address of the PostgreSQL database
+  address: localhost
+  port: 5432
+  # username is the username used to connect to the PostgreSQL database
+  username: postgres
+  # password is the password used to connect to the PostgreSQL database
+  password: postgres
+  # db_name is the name of the PostgreSQL database
+  db_name: vault_sync
+  # ssl_mode is the SSL mode used to connect to the PostgreSQL database
+  ssl_mode: disable
+  ssl_root_cert_file: /path/to/root.crt
+  # max_connections is the maximum number of connections to the PostgreSQL database
+  max_connections: 10
+
+vault:
+  # main_cluster is the main cluster from which secrets will be replicated
+  main_cluster:
+    name: main-cluster
+    address: http://vault:8200
+    tls_skip_verify: true
+    app_role_id: my_app_role
+    app_role_secret: my_app_secret
+    app_role_mount: approle
+
+  replica_clusters:
+    - name: replica-2
+      address: http://vault-replica-2:8200
+      tls_skip_verify: true
+      app_role_id: my_app_role_replica_2
+      app_role_secret: my_app_secret_replica_2
+      app_role_mount: approle2
+    - name: replica-3
+      address: http://vault-replica-3:8200
+      tls_skip_verify: true
+      app_role_id: my_app_role_replica_3
+      app_role_secret: my_app_secret_replica_3
+      app_role_mount: approle3
