@@ -5,17 +5,17 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/**'
-      - '**/*.go'
-      - '**/*.mod'
-      - '**/*.sum'
-      - 'Makefile'
+      - ".github/workflows/**"
+      - "**/*.go"
+      - "**/*.mod"
+      - "**/*.sum"
+      - "Makefile"
     branches-ignore:
-      - 'main'
-      - 'master'
-      - 'releases/**'
+      - "main"
+      - "master"
+      - "releases/**"
     tags-ignore:
-      - 'v*.*.*'
+      - "v*.*.*"
   pull_request:
     paths:
       - '.github/workflows/**'
@@ -34,11 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
           cache: true
           cache-dependency-path: |
             go.sum
@@ -52,11 +52,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
           cache: true
           cache-dependency-path: |
             go.sum
@@ -64,7 +64,7 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
-        
+
       - name: Run go vet
         run: go vet ./...
 
@@ -74,11 +74,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
           cache: true
           cache-dependency-path: |
             go.sum
@@ -86,19 +86,19 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
-        
+
       - name: Run tests with Makefile
         env:
           TEST_SILENT: 1
         run: make go-test
-  
+
   govulncheck:
     needs: setup
     runs-on: ubuntu-latest
     name: Run govulncheck
     steps:
       - uses: actions/checkout@v4
-      
+
       - id: govulncheck
         uses: golang/govulncheck-action@v1
         with:
