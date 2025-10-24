@@ -4,18 +4,18 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - 'releases/v[0-9]+.[0-9]+.[0-9]+'
-      - 'releases/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
-      - 'releases/v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
-      - 'releases/v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+'
+      - "releases/v[0-9]+.[0-9]+.[0-9]+"
+      - "releases/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "releases/v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+      - "releases/v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+"
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Release branch name (e.g., releases/v1.2.3)'
+        description: "Release branch name (e.g., releases/v1.2.3)"
         required: true
         type: string
       pr_number:
-        description: 'PR number (optional, for context)'
+        description: "PR number (optional, for context)"
         required: false
         type: string
 
@@ -34,7 +34,6 @@ jobs:
 
   # Create release automatically when PR is merged
   release:
-    needs: [test, lint]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -62,10 +61,10 @@ jobs:
             PR_TITLE="${{ github.event.pull_request.title }}"
             TRIGGER="PR #${PR_NUMBER} merged: ${PR_TITLE}"
           fi
-          
+
           # Extract version from branch name (releases/v1.2.3 -> v1.2.3)
           VERSION=$(echo "${BRANCH}" | sed 's|^releases/||')
-          
+
           echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "🚀 Preparing release for version: ${VERSION}"
@@ -75,7 +74,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
           cache: true
           cache-dependency-path: |
             go.sum
@@ -100,19 +99,19 @@ jobs:
           VERSION=${{ steps.get_version.outputs.version }}
           # Remove 'v' prefix for CHANGELOG lookup
           VERSION_NUM=${VERSION#v}
-          
+
           # Extract changelog section for this version
           CHANGELOG_CONTENT=$(awk "/## \[${VERSION_NUM}\]/,/## \[/" CHANGELOG.md | sed '1d;$d' || true)
-          
+
           # If changelog is empty, use a default message
           if [ -z "$CHANGELOG_CONTENT" ]; then
             CHANGELOG_CONTENT="Release ${VERSION}"
           fi
-          
+
           # Save to file for multiline output
           echo "$CHANGELOG_CONTENT" > /tmp/changelog.txt
           echo "changelog_file=/tmp/changelog.txt" >> $GITHUB_OUTPUT
-          
+
           echo "📝 Changelog extracted for version ${VERSION}"
 
       - name: Set up Docker Buildx
@@ -160,7 +159,7 @@ jobs:
           if [[ "${VERSION}" != *"-rc"* ]] && [[ "${VERSION}" != *"-beta"* ]] && [[ "${VERSION}" != *"-alpha"* ]]; then
             echo "🐳 Docker Latest: ghcr.io/${{ github.repository }}:latest"
           fi
-          
+
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "🔀 Released from PR #${{ github.event.pull_request.number }}"
             echo "👤 Merged by: ${{ github.event.pull_request.merged_by.login }}"
