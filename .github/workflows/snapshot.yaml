@@ -1,0 +1,48 @@
+name: snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "dev/v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    types: [closed]
+    branches:
+      - "dev/v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/test.yaml
+
+  lint:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/golangci-lint.yaml
+
+  snapshot:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: ~> v2
+          args: release --snapshot --clean
