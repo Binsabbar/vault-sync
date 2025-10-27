@@ -11,9 +11,13 @@ Vault Sync keeps your secrets synchronized between a main Vault cluster and mult
 - **Smart Sync Logic**: Only syncs when needed (version changes, new secrets, deletions)
 - **Multi-Cluster Support**: One main cluster (read-only) → multiple replicas (read-write)
 - **Path Filtering**: Use patterns to include/exclude specific paths
+- **Mount filtering**: Target specific secret engines for synchronization
 - **State Tracking**: PostgreSQL database tracks sync status and versions
 - **Secure Authentication**: AppRole-based authentication with proper permissions
+- **Version tracking**: Track secret versions to avoid unnecessary syncs
 - **Production Ready**: Comprehensive logging, error handling, and testing
+- **CLI interface**: Command-line tool with multiple subcommands
+- **Docker support**: Full containerization with development environment
 
 ## Architecture
 
