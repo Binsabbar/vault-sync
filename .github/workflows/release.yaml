@@ -8,30 +8,8 @@ on:
       - "releases/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
       - "releases/v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
       - "releases/v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+"
-  # added for testing release workflow and restricted to alpha releases only
-  # push:
-  #   branches:
-  #     - "releases/v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+"
-  # workflow_dispatch:
-  #   inputs:
-  #     branch:
-  #       description: "Release branch name (e.g., releases/v1.2.3)"
-  #       required: true
-  #       type: string
-  #     pr_number:
-  #       description: "PR number (optional, for context)"
-  #       required: false
-  #       type: string
 
 jobs:
-  # test:
-  #   if: github.event_name == 'workflow_dispatch'
-  #   uses: ./.github/workflows/test.yaml
-
-  # lint:
-  #   if: github.event_name == 'workflow_dispatch'
-  #   uses: ./.github/workflows/golangci-lint.yaml
-
   release:
     runs-on: ubuntu-latest
     permissions:
@@ -110,32 +88,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.get_version.outputs.version }}
 
-      # - name: Build and push Docker images
-      #   run: |
-      #     VERSION=${{ steps.get_version.outputs.version }}
-      #     make docker-build-and-push VERSION=${VERSION}
-      #   env:
-      #     DOCKER_REGISTRY: ghcr.io
-      #     DOCKER_IMAGE_NAME: ${{ github.repository }}
-
-      # - name: Create GitHub Release with Tag
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     tag_name: ${{ steps.get_version.outputs.version }}
-      #     name: Release ${{ steps.get_version.outputs.version }}
-      #     body_path: ${{ steps.changelog.outputs.changelog_file }}
-      #     draft: false
-      #     prerelease: ${{ contains(steps.get_version.outputs.version, '-rc') || contains(steps.get_version.outputs.version, '-beta') || contains(steps.get_version.outputs.version, '-alpha') }}
-      #     files: |
-      #       dist/*.tar.gz
-      #       dist/*.zip
-      #       dist/checksums.txt
-      #     generate_release_notes: true
-      #     append_body: true
-      #     make_latest: ${{ !contains(steps.get_version.outputs.version, '-rc') && !contains(steps.get_version.outputs.version, '-beta') && !contains(steps.get_version.outputs.version, '-alpha') }}
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Release Summary
         run: |
           VERSION=${{ steps.get_version.outputs.version }}
@@ -150,3 +102,45 @@ jobs:
             echo "🔀 Released from PR #${{ github.event.pull_request.number }}"
             echo "👤 Merged by: ${{ github.event.pull_request.merged_by.login }}"
           fi
+      
+      - name: Create PR to Master
+        if: success() && !contains(steps.get_version.outputs.version, '-alpha') && !contains(steps.get_version.outputs.version, '-beta')
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          BRANCH=${{ steps.get_version.outputs.branch }}
+          
+          echo "🔀 Creating PR from ${BRANCH} to master"
+          
+          # Create PR to master
+          PR_BODY="## Post-Release Merge
+          
+          This PR merges the release branch \`${BRANCH}\` back to master after successful release of ${VERSION}.
+          
+          ### ✅ Release Completed
+          - **Version**: ${VERSION}
+          - **Tag**: [${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${VERSION})
+          - **Docker**: \`ghcr.io/${{ github.repository_owner }}/vault-sync:${VERSION}\`
+          
+          ### 🔍 Pre-merge Checks
+          - [ ] Tag ${VERSION} exists
+          - [ ] Release artifacts are published
+          - [ ] Docker image is available
+          
+          ### 📋 Changes Included
+          This merge includes all changes from the release branch:
+          - Version bump to ${VERSION}
+          - Updated CHANGELOG.md
+          - Any release-specific fixes
+          
+          **Auto-hold**: This PR is set to auto-hold and requires manual review before merging to master."
+          
+          gh pr create \
+            --title "🚀 Merge release ${VERSION} to master" \
+            --body "${PR_BODY}" \
+            --base master \
+            --head "${BRANCH}" \
+            --draft false \
+            --label "release" \
+            --label "auto-hold"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

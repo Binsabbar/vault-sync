@@ -1,0 +1,152 @@
+name: validate-release-tag
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches:
+      - master
+
+jobs:
+  validate-tag:
+    if: startsWith(github.head_ref, 'releases/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from branch name
+        id: get_version
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          VERSION=$(echo "${BRANCH}" | sed 's|^releases/||')
+          
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "🔍 Validating release branch: ${BRANCH}"
+          echo "📋 Expected version: ${VERSION}"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          
+          echo "🏷️ Checking if tag ${VERSION} exists..."
+          
+          # Check if tag exists locally
+          if git tag -l "${VERSION}" | grep -q "${VERSION}"; then
+            echo "✅ Tag ${VERSION} exists locally"
+            TAG_EXISTS="true"
+          else
+            echo "❌ Tag ${VERSION} does not exist locally"
+            TAG_EXISTS="false"
+          fi
+          
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/${VERSION}$"; then
+            echo "✅ Tag ${VERSION} exists on remote"
+            REMOTE_TAG_EXISTS="true"
+          else
+            echo "❌ Tag ${VERSION} does not exist on remote"
+            REMOTE_TAG_EXISTS="false"
+          fi
+          
+          echo "tag_exists=${TAG_EXISTS}" >> $GITHUB_OUTPUT
+          echo "remote_tag_exists=${REMOTE_TAG_EXISTS}" >> $GITHUB_OUTPUT
+
+      - name: Check GitHub Release exists
+        id: check_release
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          
+          echo "📦 Checking if GitHub release ${VERSION} exists..."
+          
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            echo "✅ GitHub release ${VERSION} exists"
+            RELEASE_EXISTS="true"
+          else
+            echo "❌ GitHub release ${VERSION} does not exist"
+            RELEASE_EXISTS="false"
+          fi
+          
+          echo "release_exists=${RELEASE_EXISTS}" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate release completion
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          TAG_EXISTS=${{ steps.check_tag.outputs.remote_tag_exists }}
+          RELEASE_EXISTS=${{ steps.check_release.outputs.release_exists }}
+          
+          echo "🔍 Release Validation Summary:"
+          echo "  Version: ${VERSION}"
+          echo "  Tag exists: ${TAG_EXISTS}"
+          echo "  Release exists: ${RELEASE_EXISTS}"
+          
+          if [ "${TAG_EXISTS}" == "true" ] && [ "${RELEASE_EXISTS}" == "true" ]; then
+            echo "✅ All validation checks passed!"
+            echo "validation_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Validation failed!"
+            echo "validation_passed=false" >> $GITHUB_OUTPUT
+            
+            if [ "${TAG_EXISTS}" != "true" ]; then
+              echo "::error::Tag ${VERSION} does not exist. Release may not be complete."
+            fi
+            
+            if [ "${RELEASE_EXISTS}" != "true" ]; then
+              echo "::error::GitHub release ${VERSION} does not exist. Release may not be complete."
+            fi
+            
+            exit 1
+          fi
+
+      - name: Add PR comment with validation results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.get_version.outputs.version }}';
+            const tagExists = '${{ steps.check_tag.outputs.remote_tag_exists }}' === 'true';
+            const releaseExists = '${{ steps.check_release.outputs.release_exists }}' === 'true';
+            
+            const checkMark = '✅';
+            const crossMark = '❌';
+            
+            const body = `## 🔍 Release Validation Results
+            
+            **Version**: \`${version}\`
+            
+            ### Validation Checks
+            | Check | Status | Details |
+            |-------|--------|---------|
+            | Git Tag Exists | ${tagExists ? checkMark : crossMark} | Tag \`${version}\` ${tagExists ? 'found' : 'not found'} |
+            | GitHub Release | ${releaseExists ? checkMark : crossMark} | Release \`${version}\` ${releaseExists ? 'exists' : 'does not exist'} |
+            
+            ### ${tagExists && releaseExists ? '✅ Ready to Merge' : '⏳ Hold - Validation Failed'}
+            
+            ${tagExists && releaseExists 
+              ? `All validation checks passed! This PR is ready for manual review and merge.
+              
+              **Release Links:**
+              - [📦 GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${version})
+              - [🐳 Docker Image](https://ghcr.io/${{ github.repository_owner }}/vault-sync:${version})`
+              : `**⚠️ This PR is on hold until the release process completes successfully.**
+              
+              Please wait for:
+              ${!tagExists ? `- Git tag \`${version}\` to be created\n` : ''}
+              ${!releaseExists ? `- GitHub release \`${version}\` to be published\n` : ''}
+              
+              The release workflow should handle this automatically.`
+            }`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
