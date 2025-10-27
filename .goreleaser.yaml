@@ -87,19 +87,23 @@ changelog:
       - '^\[skip ci\]'
       - '^\[ci skip\]'
 
-dockers: []
-  # - image_templates:
-  #     - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:{{ .Version }}"
-  #     - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:latest"
-  #   dockerfile: Dockerfile.goreleaser
-  #   use: buildx
-  #   build_flag_templates:
-  #     - "--pull"
-  #     - "--label=org.opencontainers.image.created={{.Date}}"
-  #     - "--label=org.opencontainers.image.title={{.ProjectName}}"
-  #     - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-  #     - "--label=org.opencontainers.image.version={{.Version}}"
-  #     - "--platform=linux/amd64"
+dockers:
+  - image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:latest"
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/amd64,linux/arm64"
+    # Only tag as 'latest' for stable releases (not pre-releases)
+    skip_push: false
+    ids:
+      - vault-sync
 
 release:
   draft: false
@@ -127,3 +131,7 @@ release:
 
     ## Full Changelog
     See [CHANGELOG.md](https://github.com/binsabbar/vault-sync/blob/main/CHANGELOG.md) for details.
+  extra_files:
+    - glob: CHANGELOG.md
+    - glob: README.md
+    - glob: LICENSE

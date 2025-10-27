@@ -1,23 +1,27 @@
 # Use a minimal base image for the final container
 FROM debian:stable-slim
 
-# Set the working directory inside the container
-WORKDIR /app/vault-sync
-
 # upgrade and update the system
 RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# create a non-root user and switch to it
-RUN useradd -m vaultsyncuser
-USER vaultsyncuser
+# create a non-root group and user to run the application set it to 1001
+RUN groupadd -g 1001 vaultsyncuser && useradd -r -u 1001 -g vaultsyncuser vaultsyncuser
+
+# Set the working directory inside the container
+WORKDIR /app
 
 # Copy the pre-built binary (GoReleaser provides this)
 COPY vault-sync* ./vault-sync
 
 # Make it executable
-USER root
-RUN chmod +x ./vault-sync
+RUN chown vaultsyncuser:vaultsyncuser /app/vault-sync && \
+  chmod +x /app/vault-sync
+
 USER vaultsyncuser
 
-# Set the entrypoint to the Go application
-ENTRYPOINT ["./vault-sync"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD /app/vault-sync --version || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/app/vault-sync"]

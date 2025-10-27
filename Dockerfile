@@ -16,18 +16,24 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o vault-sync
 # Use a minimal base image for the final container
 FROM debian:stable-slim
 
-# Set the working directory inside the container
 
 # upgrade and update the system
 RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # create a non-root user and switch to it
-RUN useradd -m vaultsyncuser
+# create a non-root group and user to run the application set it to 1001
+RUN groupadd -g 1001 vaultsyncuser && useradd -r -u 1001 -g vaultsyncuser vaultsyncuser
+
 USER vaultsyncuser
-WORKDIR /app/vault-sync
+
+WORKDIR /app/
 
 # Copy the built binary from the builder stage
-COPY --from=builder /app/vault-sync/vault-sync .
+COPY --from=builder /app/vault-sync .
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD /app/vault-sync --version || exit 1
 
 # Set the entrypoint to the Go application
-ENTRYPOINT ["./vault-sync"]
+ENTRYPOINT ["/app/vault-sync"]
