@@ -86,7 +86,7 @@ changelog:
       - '^\[skip ci\]'
       - '^\[ci skip\]'
 
-dockers_v2:
+dockers:
   - ids:
       - vault-sync
     image_templates:
