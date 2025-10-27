@@ -44,8 +44,7 @@ checksum:
 changelog:
   use: github
   sort: asc
-  abbrev: 0
-  
+  abbrev: 0 
   groups:
     - title: 🚀 Features
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
@@ -87,8 +86,10 @@ changelog:
       - '^\[skip ci\]'
       - '^\[ci skip\]'
 
-dockers:
-  - image_templates:
+dockers_v2:
+  - ids:
+      - vault-sync
+    image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:{{ .Version }}"
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/{{ .ProjectName | tolower }}:latest"
     dockerfile: Dockerfile.goreleaser
@@ -104,8 +105,6 @@ dockers:
     goarch: amd64
     # Only tag as 'latest' for stable releases (not pre-releases)
     skip_push: false
-    ids:
-      - vault-sync
 
 release:
   draft: false
@@ -136,4 +135,5 @@ release:
   extra_files:
     - glob: CHANGELOG.md
     - glob: README.md
+    - glob: LICENSE
     - glob: LICENSE

@@ -131,6 +131,7 @@ gh pr merge --merge --delete-branch
    - `ghcr.io/binsabbar/vault-sync:v0.1.0`
    - `ghcr.io/binsabbar/vault-sync:latest` (stable releases only)
 7. ✅ Checksums generated for all artifacts
+8. ✅ **Auto-create PR to master** (stable releases only - excludes alpha/beta)
 
 ⏱️ **Total time**: ~8 minutes from merge to release
 
@@ -140,8 +141,34 @@ gh pr merge --merge --delete-branch
 - [ ] Verify Docker images were pushed to GHCR
 - [ ] Test Docker image: `docker run --rm ghcr.io/binsabbar/vault-sync:v0.1.0 version`
 - [ ] Download and test a binary from GitHub releases
+- [ ] **Review auto-created PR to master** (stable releases only)
+- [ ] **Approve and merge PR to master** after validation checks pass
 - [ ] Update documentation if needed
 - [ ] Announce release (if applicable)
+
+### 6. Merge to Master (Automated)
+
+For stable releases (non-alpha, non-beta), the release workflow automatically creates a PR from the release branch to master:
+
+**What happens automatically:**
+- ✅ PR created with title: `🚀 Merge release v0.1.0 to master`
+- ✅ PR includes release summary and validation checklist
+- ✅ PR is labeled with `release` and `auto-hold`
+- ✅ Tag validation workflow runs automatically
+
+**Manual steps required:**
+1. **Review the auto-created PR** in GitHub
+2. **Wait for validation checks** to pass:
+   - ✅ Git tag `v0.1.0` exists
+   - ✅ GitHub release `v0.1.0` exists
+   - ✅ Docker images are available
+3. **Approve and merge the PR** to complete the release cycle
+
+**Tag Validation Process:**
+- Automated workflow checks if the release tag exists
+- Validation results are posted as PR comments
+- PR is held until all validation checks pass
+- Manual approval required before merge to master
 
 ## Automated Release Pipeline
 
@@ -159,6 +186,8 @@ The project uses GitHub Actions and GoReleaser for fully automated releases trig
 5. **Package**: Create archives and checksums
 6. **Docker**: Build and push multi-arch images to GHCR
 7. **Release**: Create GitHub release with changelog and artifacts
+8. **PR Creation**: Auto-create PR to master (stable releases only)
+9. **Validation**: Tag validation workflow for master PRs
 
 ### Artifacts Generated:
 - **Binaries**: 
@@ -196,9 +225,36 @@ The project uses GitHub Actions and GoReleaser for fully automated releases trig
 - **Docker**: Not pushed to registry
 - **GitHub Releases**: Not created
 
-## Version Strategy
+## Complete Release Workflow
 
-We follow [Semantic Versioning](https://semver.org/):
+The complete release process now includes automatic master integration:
+
+```mermaid
+graph TD
+    A[Create feature/prepare-v1.0.0] --> B[Update CHANGELOG.md]
+    B --> C[Create PR → releases/v1.0.0]
+    C --> D[Tests & Lint Pass]
+    D --> E[Merge PR]
+    E --> F[Release Workflow Triggers]
+    F --> G[Create Tag v1.0.0]
+    G --> H[Build Binaries & Docker]
+    H --> I[Create GitHub Release]
+    I --> J{Stable Release?}
+    J -->|Yes| K[Auto-create PR → master]
+    J -->|No Alpha/Beta| L[End]
+    K --> M[Tag Validation Workflow]
+    M --> N[Manual Review & Approve]
+    N --> O[Merge to Master]
+    O --> P[Release Complete]
+```
+
+### Workflow Summary:
+1. **Developer**: Creates feature branch and PR to release branch
+2. **Automation**: Tests, builds, releases upon PR merge
+3. **Automation**: Creates PR to master (stable releases)
+4. **Automation**: Validates tags and release artifacts
+5. **Developer**: Reviews and approves master PR
+6. **Result**: Release is live and master is updated
 
 ```
 MAJOR.MINOR.PATCH[-PRERELEASE]
@@ -458,9 +514,9 @@ To enforce PR-based releases and prevent accidental direct pushes:
 
 1. **Go to**: Repository Settings → Branches → Add rule
 
-2. **Pattern**: `releases/*`
+2. **Pattern**: `releases/*` **AND** `master`
 
-3. **Configure**:
+3. **Configure for releases/* branches**:
    - ✅ **Require a pull request before merging**
      - Require approvals: 1+ (recommended)
      - Dismiss stale approvals when new commits pushed
@@ -472,16 +528,30 @@ To enforce PR-based releases and prevent accidental direct pushes:
    - ❌ **Allow force pushes**: DISABLED
    - ❌ **Allow deletions**: DISABLED
 
-4. **Save changes**
+4. **Configure for master branch**:
+   - ✅ **Require a pull request before merging**
+     - Require approvals: 1+ (required)
+     - Dismiss stale approvals when new commits pushed
+   - ✅ **Require status checks to pass before merging**
+     - Required checks: `validate-tag` (for release PRs)
+     - Require branches to be up to date before merging
+   - ✅ **Require conversation resolution before merging**
+   - ✅ **Do not allow bypassing settings**
+   - ❌ **Allow force pushes**: DISABLED
+   - ❌ **Allow deletions**: DISABLED
+
+5. **Save changes**
 
 ### Result of Branch Protection
 
 - ✅ All `releases/*` changes must go through PRs
+- ✅ All master changes must go through PRs (including from release branches)
 - ✅ Tests must pass before merge
+- ✅ Tag validation required for release → master PRs
 - ✅ Full audit trail of all releases
-- ❌ No direct pushes to `releases/*` (even for admins, unless bypass enabled)
+- ❌ No direct pushes to `releases/*` or `master` (even for admins, unless bypass enabled)
 - ❌ No accidental releases
-- 🎉 **Single, controlled release method!**
+- 🎉 **Single, controlled release method with automatic master integration!**
 
 ---
 
@@ -528,6 +598,37 @@ docker run --rm ghcr.io/binsabbar/vault-sync:v1.0.0 version
 ---
 
 ## Troubleshooting
+
+### Auto-Created PR to Master Not Found
+**Problem**: Expected auto-created PR to master after release, but it's missing
+
+**Solution**:
+1. Check if release was alpha/beta (these don't create master PRs)
+2. Verify the release workflow completed successfully
+3. Check for failed workflow runs in Actions tab
+4. Manually create PR if needed:
+   ```bash
+   gh pr create --base master --head releases/v1.0.0 --title "Merge release v1.0.0 to master"
+   ```
+
+### Tag Validation Fails on Master PR
+**Problem**: Tag validation workflow reports tag doesn't exist
+
+**Solution**:
+1. Verify the release workflow completed successfully
+2. Check if tag exists: `git tag -l v1.0.0`
+3. Check if GitHub release exists: `gh release view v1.0.0`
+4. If missing, re-run the release workflow manually
+5. Wait for validation to automatically re-run (or close/reopen PR)
+
+### Master PR Stuck on Hold
+**Problem**: PR to master shows "auto-hold" but validation passed
+
+**Solution**:
+1. Review the PR comments for validation status
+2. Ensure all required status checks have passed
+3. Add manual approval if branch protection requires it
+4. Merge the PR once all checks and approvals are complete
 
 ### PR Tests Fail
 **Problem**: Tests or lint fail on PR to `releases/*` branch
