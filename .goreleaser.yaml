@@ -99,7 +99,7 @@ dockers:
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--platform=linux/amd64,linux/arm64"
+      - "--platform=linux/amd64"
     goos: linux
     goarch: amd64
     # Only tag as 'latest' for stable releases (not pre-releases)
