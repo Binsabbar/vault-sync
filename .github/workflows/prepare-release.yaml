@@ -53,6 +53,7 @@ jobs:
             # Stable release preparation
             VERSION="${BASE_VERSION}"
             FULL_VERSION="v${BASE_VERSION}"
+            PRERELEASE_SUFFIX=""
             echo "📝 Preparing stable release v${BASE_VERSION}"
           else
             # Pre-release - calculate next suffix number
@@ -75,6 +76,7 @@ jobs:
             
             VERSION="${BASE_VERSION}-${PRERELEASE}.${SUFFIX}"
             FULL_VERSION="v${VERSION}"
+            PRERELEASE_SUFFIX="${PRERELEASE}.${SUFFIX}"
             echo "📝 Preparing pre-release ${FULL_VERSION}"
           fi
           
@@ -83,6 +85,7 @@ jobs:
           echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
           echo "branch=feature/prepare-release-${FULL_VERSION}" >> $GITHUB_OUTPUT
           echo "prerelease=${PRERELEASE}" >> $GITHUB_OUTPUT
+          echo "prerelease_suffix=${PRERELEASE_SUFFIX}" >> $GITHUB_OUTPUT
 
       - name: Check if preparation already exists
         id: check
@@ -119,6 +122,7 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           BASE_VERSION=${{ steps.version.outputs.base_version }}
           PRERELEASE=${{ steps.version.outputs.prerelease }}
+          PRERELEASE_SUFFIX="${{ steps.version.outputs.prerelease_suffix }}"
           
           # Determine version bump type from version number
           CURRENT_VERSION=$(changie latest 2>/dev/null || echo "0.0.0")
@@ -138,16 +142,26 @@ jobs:
           
           echo "📝 Running changie batch ${BUMP} for v${VERSION}..."
           
-          # Run changie batch with pre-release flag if specified
-          if [ "$PRERELEASE" != "none" ]; then
-            echo "🏷️ Including pre-release suffix: ${PRERELEASE}"
-            changie batch ${BUMP} -p ${PRERELEASE}
+          # Run changie batch with FULL pre-release suffix
+          if [ -n "$PRERELEASE_SUFFIX" ]; then
+            echo "🏷️ Including pre-release suffix: ${PRERELEASE_SUFFIX}"
+            changie batch ${BUMP} -p ${PRERELEASE_SUFFIX}
           else
             changie batch ${BUMP}
           fi
           
           # Merge into CHANGELOG.md
           changie merge
+          
+          # Verify the version was created correctly
+          if ! grep -q "^## ${VERSION} - " CHANGELOG.md; then
+            echo "::error::Expected version '${VERSION}' not found in CHANGELOG.md"
+            echo "Found instead:"
+            head -5 CHANGELOG.md
+            exit 1
+          fi
+          
+          echo "✅ Changelog version verified: ${VERSION}"
           
           # Show what was generated
           echo ""
