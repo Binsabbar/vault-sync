@@ -1,0 +1,288 @@
+# .github/workflows/release.yaml
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Base version (e.g., 1.0.0) - suffix will be auto-incremented'
+        required: true
+        type: string
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options: [stable, rc, beta, alpha]
+      promote_from:
+        description: 'Promote from tag (for stable releases, e.g., v1.0.0-rc.1)'
+        required: false
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install changie
+        run: go install github.com/miniscruff/changie@latest
+
+      - name: Calculate version with auto-increment suffix
+        id: version
+        run: |
+          BASE_VERSION="${{ github.event.inputs.version }}"
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          PROMOTE_FROM="${{ github.event.inputs.promote_from }}"
+          
+          # Remove 'v' prefix if present
+          BASE_VERSION="${BASE_VERSION#v}"
+          
+          if [ "$RELEASE_TYPE" == "stable" ]; then
+            # Stable release - no suffix
+            VERSION="v${BASE_VERSION}"
+          else
+            # Pre-release - calculate next suffix number
+            echo "🔍 Finding existing ${RELEASE_TYPE} tags for ${BASE_VERSION}..."
+            
+            # Get all tags matching this base version and release type
+            EXISTING_TAGS=$(git tag -l "v${BASE_VERSION}-${RELEASE_TYPE}.*" | sort -V)
+            
+            if [ -z "$EXISTING_TAGS" ]; then
+              # No existing tags, start with .1
+              SUFFIX=1
+              echo "✨ First ${RELEASE_TYPE} release for ${BASE_VERSION}"
+            else
+              # Find the highest suffix number
+              LAST_TAG=$(echo "$EXISTING_TAGS" | tail -1)
+              LAST_SUFFIX=$(echo "$LAST_TAG" | grep -oP "${RELEASE_TYPE}\.\K[0-9]+$")
+              SUFFIX=$((LAST_SUFFIX + 1))
+              echo "📈 Found existing tags, incrementing from ${LAST_TAG} to .${SUFFIX}"
+            fi
+            
+            VERSION="v${BASE_VERSION}-${RELEASE_TYPE}.${SUFFIX}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$([[ $RELEASE_TYPE != 'stable' ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "promote_from=${PROMOTE_FROM}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Calculated version: ${VERSION}"
+
+      - name: Check if tag exists
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists (this shouldn't happen with auto-increment)"
+            exit 1
+          fi
+          echo "✅ Tag ${VERSION} is available"
+
+      - name: Determine commit to tag
+        id: commit
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          PROMOTE_FROM="${{ steps.version.outputs.promote_from }}"
+          
+          if [ "$RELEASE_TYPE" == "stable" ] && [ -n "$PROMOTE_FROM" ]; then
+            # Stable release: tag the same commit as the RC
+            echo "🔄 Promoting ${PROMOTE_FROM} to ${VERSION}"
+            
+            if ! COMMIT_SHA=$(git rev-list -n 1 "${PROMOTE_FROM}" 2>/dev/null); then
+              echo "::error::Tag ${PROMOTE_FROM} not found. Cannot promote."
+              exit 1
+            fi
+            
+            echo "📍 Will tag commit ${COMMIT_SHA} (same as ${PROMOTE_FROM})"
+            echo "promote=true" >> $GITHUB_OUTPUT
+          else
+            # Pre-release or new stable: tag current HEAD of main
+            COMMIT_SHA=$(git rev-parse HEAD)
+            echo "📍 Will tag current HEAD: ${COMMIT_SHA}"
+            echo "promote=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Get release notes from changie
+        id: notes
+        run: |
+          VERSION=${{ steps.version.outputs.version_no_v }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          
+          # Check if this exact version exists in CHANGELOG
+          if grep -q "^## ${VERSION}" CHANGELOG.md; then
+            echo "📝 Extracting existing changelog for ${VERSION}"
+            awk "/^## ${VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/release_notes.md
+          elif grep -q "^## ${BASE_VERSION}" CHANGELOG.md; then
+            # Base version exists, extract it and add pre-release info
+            echo "📝 Extracting changelog for base version ${BASE_VERSION}"
+            awk "/^## ${BASE_VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/base_notes.md
+            
+            # Add pre-release header
+            if [ "$RELEASE_TYPE" != "stable" ]; then
+              # List changes since last pre-release tag
+              LAST_TAG=$(git describe --tags --abbrev=0 --match="v${BASE_VERSION}-*" 2>/dev/null || echo "")
+              
+              cat > /tmp/release_notes.md <<EOF
+          ## ⚠️ Pre-release: ${RELEASE_TYPE^^}
+
+          This is a **${RELEASE_TYPE}** pre-release for testing purposes.
+
+          **Not recommended for production use.**
+
+          EOF
+              
+              if [ -n "$LAST_TAG" ]; then
+                echo "" >> /tmp/release_notes.md
+                echo "### Changes since ${LAST_TAG}" >> /tmp/release_notes.md
+                echo "" >> /tmp/release_notes.md
+                git log ${LAST_TAG}..HEAD --pretty=format:"* %s (%h)" >> /tmp/release_notes.md
+                echo "" >> /tmp/release_notes.md
+              fi
+              
+              echo "" >> /tmp/release_notes.md
+              echo "---" >> /tmp/release_notes.md
+              echo "" >> /tmp/release_notes.md
+              echo "### Full ${BASE_VERSION} Changelog" >> /tmp/release_notes.md
+              echo "" >> /tmp/release_notes.md
+              cat /tmp/base_notes.md >> /tmp/release_notes.md
+            else
+              cp /tmp/base_notes.md /tmp/release_notes.md
+            fi
+          else
+            echo "::error::No changelog found for ${VERSION} or ${BASE_VERSION}"
+            echo "Run prepare-release workflow first:"
+            echo "  gh workflow run prepare-release.yaml -f version=${BASE_VERSION}"
+            exit 1
+          fi
+          
+          # Add promotion notice if needed
+          if [ "${{ steps.commit.outputs.promote }}" == "true" ]; then
+            cat > /tmp/notes_with_promotion.md <<EOF
+          ## ✅ Stable Release
+
+          This stable release was promoted from **${{ steps.version.outputs.promote_from }}** after successful validation.
+
+          **Commit:** ${{ steps.commit.outputs.sha }}
+
+          ---
+
+          $(cat /tmp/release_notes.md)
+          EOF
+            mv /tmp/notes_with_promotion.md /tmp/release_notes.md
+          fi
+          
+          echo "file=/tmp/release_notes.md" >> $GITHUB_OUTPUT
+          
+          echo "📄 Release notes preview:"
+          head -30 /tmp/release_notes.md
+
+      - name: Create and push tag
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          COMMIT_SHA=${{ steps.commit.outputs.sha }}
+          IS_PROMOTE=${{ steps.commit.outputs.promote }}
+          
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          
+          if [ "$IS_PROMOTE" == "true" ]; then
+            echo "🏷️ Promoting ${{ steps.version.outputs.promote_from }} → ${VERSION}"
+          else
+            echo "🏷️ Creating tag ${VERSION} for commit ${COMMIT_SHA}"
+          fi
+          
+          git tag -a "${VERSION}" "${COMMIT_SHA}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+          
+          echo "✅ Tag ${VERSION} created successfully"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --release-notes=${{ steps.notes.outputs.file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+
+      - name: Release Summary
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          COMMIT_SHA=${{ steps.commit.outputs.sha }}
+          PROMOTE_FROM="${{ steps.version.outputs.promote_from }}"
+          
+          echo "✅ Release ${VERSION} created successfully!"
+          echo "📦 Type: ${RELEASE_TYPE}"
+          echo "📍 Commit: ${COMMIT_SHA}"
+          
+          if [ -n "$PROMOTE_FROM" ]; then
+            echo "🔄 Promoted from: ${PROMOTE_FROM}"
+          fi
+          
+          echo "🔗 https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+          echo "🐳 Docker: ghcr.io/${{ github.repository_owner }}/vault-sync:${VERSION}"
+          
+          # Show next steps
+          case "$RELEASE_TYPE" in
+            alpha)
+              echo ""
+              echo "Next steps:"
+              echo "  1. Test this alpha release: ${VERSION}"
+              echo "  2. Fix bugs on main and commit"
+              echo "  3. Create next alpha: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=alpha"
+              echo "  4. Or move to beta: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=beta"
+              ;;
+            beta)
+              echo ""
+              echo "Next steps:"
+              echo "  1. Test this beta release: ${VERSION}"
+              echo "  2. Fix bugs on main and commit"
+              echo "  3. Create next beta: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=beta"
+              echo "  4. Or move to RC: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=rc"
+              ;;
+            rc)
+              echo ""
+              echo "Next steps:"
+              echo "  1. Final validation of: ${VERSION}"
+              echo "  2. If issues found, fix and create: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=rc"
+              echo "  3. If approved, promote to stable: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=stable -f promote_from=${VERSION}"
+              ;;
+            stable)
+              echo ""
+              echo "🎉 Stable release complete!"
+              echo ""
+              echo "Tagged as: ${VERSION}"
+              echo "Docker latest: ghcr.io/${{ github.repository_owner }}/vault-sync:latest"
+              ;;
+          esac
