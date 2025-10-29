@@ -1,0 +1,189 @@
+# .github/workflows/release-freeze-guard.yaml
+name: release-freeze-guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+  # Also run when prepare-release PR is merged to clear blocks
+  push:
+    branches:
+      - main
+
+jobs:
+  check-freeze:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check for active release freeze
+        id: freeze-check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Only check on pull_request events
+            if (context.eventName !== 'pull_request') {
+              console.log('Not a PR event, skipping freeze check');
+              return;
+            }
+            
+            const currentPR = context.payload.pull_request;
+            
+            // Don't check prepare-release PRs themselves
+            if (currentPR.head.ref.startsWith('feature/prepare-release-')) {
+              console.log('This is a prepare-release PR, skipping check');
+              return;
+            }
+            
+            // Find all open prepare-release PRs
+            const { data: allPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              base: 'main',
+              per_page: 100
+            });
+            
+            const prepareReleasePRs = allPRs.filter(pr => 
+              pr.head.ref.startsWith('feature/prepare-release-')
+            );
+            
+            if (prepareReleasePRs.length === 0) {
+              console.log('✅ No release freeze active');
+              core.setOutput('frozen', 'false');
+              return;
+            }
+            
+            // Release freeze is active
+            const blockingPR = prepareReleasePRs[0];
+            core.setOutput('frozen', 'true');
+            core.setOutput('pr_number', blockingPR.number);
+            core.setOutput('pr_title', blockingPR.title);
+            core.setOutput('pr_url', blockingPR.html_url);
+            core.setOutput('pr_author', blockingPR.user.login);
+            
+            // Extract version from branch name
+            const versionMatch = blockingPR.head.ref.match(/prepare-release-v?(.+)$/);
+            const version = versionMatch ? versionMatch[1] : 'unknown';
+            core.setOutput('version', version);
+            
+            console.log(`⚠️ Release freeze active for v${version}`);
+            console.log(`Blocking PR: #${blockingPR.number}`);
+            
+            // Set failed status to block merge
+            core.setFailed(
+              `🚫 Release freeze for v${version} is active!\n\n` +
+              `Blocking PR: #${blockingPR.number} - ${blockingPR.title}\n` +
+              `${blockingPR.html_url}\n\n` +
+              `Please wait for the release preparation to complete.`
+            );
+
+      - name: Add freeze labels
+        if: steps.freeze-check.outputs.frozen == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ['🧊 release-freeze', '⏸️ on-hold']
+            });
+
+      - name: Comment on PR
+        if: steps.freeze-check.outputs.frozen == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.freeze-check.outputs.version }}';
+            const prNumber = '${{ steps.freeze-check.outputs.pr_number }}';
+            const prTitle = '${{ steps.freeze-check.outputs.pr_title }}';
+            const prUrl = '${{ steps.freeze-check.outputs.pr_url }}';
+            const prAuthor = '${{ steps.freeze-check.outputs.pr_author }}';
+            
+            const body = `## 🧊 Release Freeze Active
+            
+            **Version:** v${version}  
+            **Status:** Preparing release
+            
+            ### Blocking PR
+            
+            [#${prNumber} - ${prTitle}](${prUrl}) by @${prAuthor}
+            
+            ### 📋 What This Means
+            
+            - ⛔ This PR **cannot be merged** until the release preparation completes
+            - 🔄 The release process ensures a clean, tested release
+            - ⏰ Typical freeze duration: **15-30 minutes**
+            
+            ### ✅ What You Can Do
+            
+            1. **Wait** - Most freezes are resolved quickly
+            2. **Keep your PR updated** - Rebase on latest main
+            3. **Monitor** - Watch [#${prNumber}](${prUrl}) for updates
+            
+            ### 🚀 After Release Prep Merges
+            
+            1. Your PR will be **automatically unblocked**
+            2. Rebase on the updated main branch
+            3. Re-request reviews if needed
+            
+            ---
+            
+            _This freeze prevents conflicts and ensures release quality. Thank you for your patience!_ 🙏`;
+            
+            // Check for existing freeze comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number
+            });
+            
+            const existingComment = comments.find(c => 
+              c.user.type === 'Bot' && 
+              c.body.includes('🧊 Release Freeze Active')
+            );
+            
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: body
+              });
+            }
+
+      - name: Remove freeze labels (if not frozen)
+        if: steps.freeze-check.outputs.frozen == 'false' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const labels = ['🧊 release-freeze', '⏸️ on-hold'];
+            
+            for (const label of labels) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  name: label
+                });
+              } catch (error) {
+                console.log(`Label "${label}" not found or already removed`);
+              }
+            }
+
+      - name: Success message
+        if: steps.freeze-check.outputs.frozen == 'false' && github.event_name == 'pull_request'
+        run: |
+          echo "✅ No release freeze active - PR can proceed normally"

@@ -1,0 +1,288 @@
+# .github/workflows/prepare-release.yaml
+name: prepare-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Base version (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease_type:
+        description: 'Pre-release type (none for stable preparation)'
+        required: false
+        type: choice
+        options:
+          - none
+          - alpha
+          - beta
+          - rc
+        default: none
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install changie
+        run: go install github.com/miniscruff/changie@latest
+
+      - name: Calculate version with auto-increment
+        id: version
+        run: |
+          BASE_VERSION="${{ github.event.inputs.version }}"
+          PRERELEASE="${{ github.event.inputs.prerelease_type }}"
+          
+          # Remove 'v' prefix if present
+          BASE_VERSION="${BASE_VERSION#v}"
+          
+          if [ "$PRERELEASE" == "none" ]; then
+            # Stable release preparation
+            VERSION="${BASE_VERSION}"
+            FULL_VERSION="v${BASE_VERSION}"
+            echo "📝 Preparing stable release v${BASE_VERSION}"
+          else
+            # Pre-release - calculate next suffix number
+            echo "🔍 Finding existing ${PRERELEASE} tags for ${BASE_VERSION}..."
+            
+            # Get all tags matching this base version and prerelease type
+            EXISTING_TAGS=$(git tag -l "v${BASE_VERSION}-${PRERELEASE}.*" | sort -V)
+            
+            if [ -z "$EXISTING_TAGS" ]; then
+              # No existing tags, start with .1
+              SUFFIX=1
+              echo "✨ First ${PRERELEASE} preparation for ${BASE_VERSION}"
+            else
+              # Find the highest suffix number
+              LAST_TAG=$(echo "$EXISTING_TAGS" | tail -1)
+              LAST_SUFFIX=$(echo "$LAST_TAG" | grep -oP "${PRERELEASE}\.\K[0-9]+$")
+              SUFFIX=$((LAST_SUFFIX + 1))
+              echo "📈 Found existing tags, next will be .${SUFFIX}"
+            fi
+            
+            VERSION="${BASE_VERSION}-${PRERELEASE}.${SUFFIX}"
+            FULL_VERSION="v${VERSION}"
+            echo "📝 Preparing pre-release ${FULL_VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "full_version=${FULL_VERSION}" >> $GITHUB_OUTPUT
+          echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "branch=feature/prepare-release-${FULL_VERSION}" >> $GITHUB_OUTPUT
+          echo "prerelease=${PRERELEASE}" >> $GITHUB_OUTPUT
+
+      - name: Check if preparation already exists
+        id: check
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          FULL_VERSION=${{ steps.version.outputs.full_version }}
+          
+          # Check if this exact version is already in CHANGELOG
+          if grep -q "^## ${VERSION}" CHANGELOG.md 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Version ${VERSION} already in CHANGELOG.md"
+            echo ""
+            echo "This version has already been prepared."
+            echo "If you need to create another pre-release, the suffix has already been incremented."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ New release preparation needed for ${FULL_VERSION}"
+          fi
+
+      - name: Create preparation branch
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          BRANCH=${{ steps.version.outputs.branch }}
+          
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git checkout -b "${BRANCH}"
+          
+          echo "✅ Created branch: ${BRANCH}"
+
+      - name: Batch changelog with changie
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          PRERELEASE=${{ steps.version.outputs.prerelease }}
+          
+          # Determine version bump type from version number
+          CURRENT_VERSION=$(changie latest 2>/dev/null || echo "0.0.0")
+          # Remove any pre-release suffix from current version for comparison
+          CURRENT_BASE=$(echo "$CURRENT_VERSION" | sed 's/-.*$//')
+          
+          IFS='.' read -r CURR_MAJOR CURR_MINOR CURR_PATCH <<< "$CURRENT_BASE"
+          IFS='.' read -r NEW_MAJOR NEW_MINOR NEW_PATCH <<< "$BASE_VERSION"
+          
+          if [ "$NEW_MAJOR" != "$CURR_MAJOR" ]; then
+            BUMP="major"
+          elif [ "$NEW_MINOR" != "$CURR_MINOR" ]; then
+            BUMP="minor"
+          else
+            BUMP="patch"
+          fi
+          
+          echo "📝 Running changie batch ${BUMP} for v${VERSION}..."
+          
+          # Run changie batch with pre-release flag if specified
+          if [ "$PRERELEASE" != "none" ]; then
+            echo "🏷️ Including pre-release suffix: ${PRERELEASE}"
+            changie batch ${BUMP} -p ${PRERELEASE}
+          else
+            changie batch ${BUMP}
+          fi
+          
+          # Merge into CHANGELOG.md
+          changie merge
+          
+          # Show what was generated
+          echo ""
+          echo "📄 Generated changelog:"
+          head -40 CHANGELOG.md
+
+      - name: Count changes
+        if: steps.check.outputs.exists == 'false'
+        id: changes
+        run: |
+          CHANGE_COUNT=$(find .changes/unreleased -type f ! -name '.gitkeep' 2>/dev/null | wc -l || echo 0)
+          echo "count=${CHANGE_COUNT}" >> $GITHUB_OUTPUT
+          echo "📊 Batched ${CHANGE_COUNT} changes"
+
+      - name: Commit and push
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          FULL_VERSION=${{ steps.version.outputs.full_version }}
+          BRANCH=${{ steps.version.outputs.branch }}
+          PRERELEASE=${{ steps.version.outputs.prerelease }}
+          
+          COMMIT_MSG="chore: prepare release ${FULL_VERSION}"
+          
+          git add .changes/ CHANGELOG.md
+          git commit -m "${COMMIT_MSG}
+
+          - Batch unreleased changes with changie
+          - Update CHANGELOG.md for ${FULL_VERSION}
+          
+          This prepares the changelog for the ${FULL_VERSION} release."
+          
+          git push origin "${BRANCH}"
+          
+          echo "✅ Pushed to ${BRANCH}"
+
+      - name: Create PR
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          FULL_VERSION=${{ steps.version.outputs.full_version }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          BRANCH=${{ steps.version.outputs.branch }}
+          CHANGE_COUNT=${{ steps.changes.outputs.count }}
+          PRERELEASE=${{ steps.version.outputs.prerelease }}
+          
+          # Extract changelog preview
+          PREVIEW=$(awk "/^## ${VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md | head -30)
+          
+          if [ "$PRERELEASE" == "none" ]; then
+            PR_TITLE="🚀 Prepare release ${FULL_VERSION}"
+            RELEASE_TYPE="stable"
+            NEXT_STEPS="After merging this PR, create the release:
+             \`\`\`bash
+             gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=stable
+             \`\`\`"
+          else
+            PR_TITLE="🧪 Prepare pre-release ${FULL_VERSION}"
+            RELEASE_TYPE="pre-release (${PRERELEASE})"
+            NEXT_STEPS="After merging this PR, create the pre-release:
+             \`\`\`bash
+             gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=${PRERELEASE}
+             \`\`\`
+             
+             **Note:** The release workflow will auto-increment to ${FULL_VERSION}"
+          fi
+          
+          PR_BODY="## 🚀 Prepare Release ${FULL_VERSION}
+          
+          **Type:** ${RELEASE_TYPE}  
+          **Changes batched:** ${CHANGE_COUNT}
+          
+          ### 📝 Changelog Preview
+          
+          <details>
+          <summary>Click to expand (${CHANGE_COUNT} changes)</summary>
+          
+          \`\`\`markdown
+          ${PREVIEW}
+          \`\`\`
+          
+          </details>
+          
+          ### 🔄 Next Steps
+          
+          ${NEXT_STEPS}
+          
+          ### ✅ Review Checklist
+          
+          - [ ] Changelog entries are accurate and complete
+          - [ ] Version number is correct (${FULL_VERSION})
+          - [ ] Ready to proceed with release
+          
+          ---
+          
+          _Generated by \`changie batch\` with ${CHANGE_COUNT} unreleased changes._"
+          
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "${PR_TITLE}" \
+            --body "${PR_BODY}" \
+            --label "release" \
+            --label "changelog"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Workflow complete
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          FULL_VERSION=${{ steps.version.outputs.full_version }}
+          PRERELEASE=${{ steps.version.outputs.prerelease }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          
+          echo "✅ Preparation complete for ${FULL_VERSION}!"
+          echo ""
+          echo "📋 Summary:"
+          echo "  - Version: ${FULL_VERSION}"
+          echo "  - Type: $([ "$PRERELEASE" == "none" ] && echo "stable" || echo "pre-release (${PRERELEASE})")"
+          echo "  - Changes: ${{ steps.changes.outputs.count }}"
+          echo ""
+          echo "🔄 Next steps:"
+          echo "  1. Review and merge the PR"
+          echo "  2. Run: gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=$([ "$PRERELEASE" == "none" ] && echo "stable" || echo "${PRERELEASE}")"
+
+      - name: Already prepared
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          FULL_VERSION=${{ steps.version.outputs.full_version }}
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          PRERELEASE=${{ steps.version.outputs.prerelease }}
+          
+          echo "ℹ️ Release ${FULL_VERSION} is already prepared in CHANGELOG.md"
+          echo ""
+          echo "You can proceed with creating the release:"
+          echo "  gh workflow run release.yaml -f version=${BASE_VERSION} -f release_type=$([ "$PRERELEASE" == "none" ] && echo "stable" || echo "${PRERELEASE}")"

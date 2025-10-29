@@ -12,22 +12,9 @@ on:
       - "Makefile"
     branches-ignore:
       - "main"
-      - "master"
       - "releases/**"
     tags-ignore:
       - "v*.*.*"
-  pull_request:
-    paths:
-      - '.github/workflows/**'
-      - '**/*.go'
-      - '**/*.mod'
-      - '**/*.sum'
-      - 'Makefile'
-    branches:
-      - 'main'
-      - 'master'
-      - 'releases/**'
-      - 'dev/v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
   setup:

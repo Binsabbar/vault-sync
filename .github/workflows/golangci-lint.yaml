@@ -13,23 +13,9 @@ on:
       - 'Makefile'
     branches-ignore:
       - 'main'
-      - 'master'
       - 'releases/**'
     tags-ignore:
       - 'v*.*.*'
-  pull_request:
-    paths:
-      - '.github/workflows/**'
-      - '**/*.go'
-      - '**/*.mod'
-      - '**/*.sum'
-      - '.golangci.yml'
-      - 'Makefile'
-    branches:
-      - 'main'
-      - 'master'
-      - 'releases/**'
-      - 'dev/**'
 
 jobs:
   golangci:
