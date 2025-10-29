@@ -4,34 +4,249 @@ This document outlines the release process for vault-sync.
 
 ## 🎯 Release Method
 
-**There is ONE way to release: Pull Request → `releases/*` branch**
+**We use GitHub Flow with automated changelog management via [changie](https://changie.dev/).**
 
-All releases are created through Pull Requests targeting `releases/*` branches. Direct pushes to `releases/*` branches are **blocked** by branch protection rules.
+All releases are created from the `main` branch using automated workflows. Tags are created automatically, and GoReleaser handles building and publishing.
 
 ## Release Types
 
-### Major Releases (x.0.0)
-- Breaking changes
-- Major new features
-- Architectural changes
-- Example: `releases/v1.0.0`
+### Semantic Versioning
 
-### Minor Releases (0.x.0)
-- New features
-- Enhancements
-- Non-breaking changes
-- Example: `releases/v0.1.0`
+We follow [Semantic Versioning](https://semver.org/):
 
-### Patch Releases (0.0.x)
-- Bug fixes
-- Security fixes
-- Minor improvements
-- Example: `releases/v0.1.1`
+```
+MAJOR.MINOR.PATCH[-PRERELEASE]
+```
 
-### Pre-release Versions
-- **Release Candidates**: `releases/v0.1.0-rc.1`
-- **Beta Releases**: `releases/v0.1.0-beta.1`
-- **Alpha Releases**: `releases/v0.1.0-alpha.1`
+**Examples:**
+- `v1.0.0` - Stable release
+- `v1.2.3-alpha.1` - Alpha pre-release
+- `v1.2.3-beta.2` - Beta pre-release  
+- `v1.2.3-rc.1` - Release candidate
+
+### Version Types
+
+| Type      | Format           | When to Use                        | Example          |
+| --------- | ---------------- | ---------------------------------- | ---------------- |
+| **Major** | `vX.0.0`         | Breaking changes, major rewrites   | `v2.0.0`         |
+| **Minor** | `v0.X.0`         | New features (backward compatible) | `v1.3.0`         |
+| **Patch** | `v0.0.X`         | Bug fixes, security patches        | `v1.2.5`         |
+| **Alpha** | `vX.Y.Z-alpha.N` | Early testing, unstable            | `v1.0.0-alpha.1` |
+| **Beta**  | `vX.Y.Z-beta.N`  | Feature complete, testing          | `v1.0.0-beta.1`  |
+| **RC**    | `vX.Y.Z-rc.N`    | Release candidate, final testing   | `v1.0.0-rc.1`    |
+
+---
+
+## 📋 Development Workflow
+
+### 1. During Feature Development
+
+For every user-facing change, add a changelog entry using changie:
+
+```bash
+# After making code changes, add changelog entry
+changie new
+
+# Interactive prompt:
+# ? What kind of change is this? 
+#   > ✨ Added          (new features)
+#     🐛 Fixed          (bug fixes)
+#     💥 Breaking Changes
+#     🔄 Changed        (improvements)
+#     🔒 Security       (security fixes)
+#     ⚡ Performance    (performance improvements)
+#     📚 Documentation  (docs updates)
+#     ⚠️ Deprecated     (deprecation warnings)
+#     🗑️ Removed        (removed features)
+#     ⚠️ Known Issues   (known limitations)
+# 
+# ? What's the change? Fix race condition in circuit breaker
+# 
+# ✅ Created: .changes/unreleased/20251029_123456_fixed.yaml
+
+# Commit the changelog entry with your code
+git add .changes/unreleased/
+git commit -m "fix: race condition in circuit breaker"
+git push
+```
+
+**What NOT to add to changie:**
+- CI/CD workflow changes
+- Dependency updates (unless security-related)
+- Code refactoring
+- Test improvements
+- Internal code cleanup
+
+Use conventional commits for these instead:
+```bash
+git commit -m "ci: update release workflow"
+git commit -m "chore: bump dependencies"
+git commit -m "refactor: improve error handling"
+git commit -m "test: add integration tests"
+```
+
+### 2. Create Pull Request to Main
+
+```bash
+# Create PR
+gh pr create --base main --title "Fix race condition in circuit breaker"
+
+# After review and CI passes, merge
+gh pr merge --squash
+```
+
+---
+
+## 🚀 Release Process
+
+### Overview
+
+```mermaid
+graph LR
+    A[Features on main] -->|Prepare| B[prepare-release workflow]
+    B -->|Creates PR| C[Review changelog PR]
+    C -->|Merge| D[main updated]
+    D -->|Trigger| E[release workflow]
+    E -->|Creates| F[Git tag]
+    F -->|GoReleaser| G[GitHub Release]
+    G -->|Publishes| H[Docker images]
+```
+
+### Step 1: Prepare Release
+
+When you're ready to release, run the prepare-release workflow:
+
+```bash
+# For first alpha release
+gh workflow run prepare-release.yaml \
+  -f version=1.0.0 \
+  -f prerelease_type=alpha
+
+# For stable release
+gh workflow run prepare-release.yaml \
+  -f version=1.0.0 \
+  -f prerelease_type=none
+```
+
+**What this does:**
+1. ✅ Automatically calculates next pre-release number (e.g., `alpha.1`, `alpha.2`)
+2. ✅ Runs `changie batch` to collect all unreleased changes
+3. ✅ Updates [`CHANGELOG.md`](CHANGELOG.md ) with structured changelog
+4. ✅ Creates branch: `feature/prepare-release-v1.0.0-alpha.1`
+5. ✅ Creates PR to `main` with changelog changes
+
+### Step 2: Review & Merge Preparation PR
+
+```bash
+# Review the auto-created PR
+gh pr view
+
+# The PR shows:
+# - Complete changelog for this version
+# - Count of changes included
+# - Next steps for creating the release
+
+# After review, merge it
+gh pr merge --squash
+```
+
+### Step 3: Create Release
+
+After the prepare-release PR is merged, trigger the actual release:
+
+```bash
+# Create the release (auto-increments suffix if pre-release)
+gh workflow run release.yaml \
+  -f version=1.0.0 \
+  -f release_type=alpha
+```
+
+**What this does:**
+1. ✅ Auto-calculates next suffix (e.g., `v1.0.0-alpha.1`, `v1.0.0-alpha.2`)
+2. ✅ Creates git tag from `main` branch
+3. ✅ Runs GoReleaser to build binaries and Docker images
+4. ✅ Creates GitHub Release with changelog from changie
+5. ✅ Publishes Docker images to GHCR
+
+**Releases are created within ~5 minutes!**
+
+---
+
+## 🔄 Complete Release Cycle Example
+
+### Alpha → Beta → RC → Stable
+
+```bash
+# 1. Prepare first alpha
+gh workflow run prepare-release.yaml -f version=1.0.0 -f prerelease_type=alpha
+# Merge the PR
+gh pr merge <PR_NUMBER> --squash
+
+# 2. Create alpha.1 release
+gh workflow run release.yaml -f version=1.0.0 -f release_type=alpha
+# Result: v1.0.0-alpha.1 released
+
+# 3. Fix bugs on main, add changelog entries with changie...
+
+# 4. Prepare another alpha
+gh workflow run prepare-release.yaml -f version=1.0.0 -f prerelease_type=alpha
+# Merge the PR
+
+# 5. Create alpha.2 release (auto-increments!)
+gh workflow run release.yaml -f version=1.0.0 -f release_type=alpha
+# Result: v1.0.0-alpha.2 released
+
+# 6. Move to beta
+gh workflow run prepare-release.yaml -f version=1.0.0 -f prerelease_type=beta
+gh pr merge <PR_NUMBER> --squash
+gh workflow run release.yaml -f version=1.0.0 -f release_type=beta
+# Result: v1.0.0-beta.1 released
+
+# 7. Move to RC
+gh workflow run prepare-release.yaml -f version=1.0.0 -f prerelease_type=rc
+gh pr merge <PR_NUMBER> --squash
+gh workflow run release.yaml -f version=1.0.0 -f release_type=rc
+# Result: v1.0.0-rc.1 released
+
+# 8. Promote RC to stable (uses same commit as RC!)
+gh workflow run prepare-release.yaml -f version=1.0.0 -f prerelease_type=none
+gh pr merge <PR_NUMBER> --squash
+gh workflow run release.yaml \
+  -f version=1.0.0 \
+  -f release_type=stable \
+  -f promote_from=v1.0.0-rc.1
+# Result: v1.0.0 released (same commit as v1.0.0-rc.1)
+```
+
+---
+
+## 📦 What Gets Released
+
+### For All Releases
+
+| Artifact          | Description                | Location                         |
+| ----------------- | -------------------------- | -------------------------------- |
+| **Git Tag**       | Version tag                | `v1.0.0`, `v1.0.0-alpha.1`, etc. |
+| **Binaries**      | Cross-platform executables | GitHub Releases                  |
+| **Archives**      | `.tar.gz` / `.zip`         | GitHub Releases                  |
+| **Checksums**     | SHA256 checksums           | GitHub Releases                  |
+| **Docker Images** | Multi-arch containers      | `ghcr.io/binsabbar/vault-sync`   |
+
+### Stable Releases (v1.0.0)
+
+- ✅ Docker tag: `:v1.0.0`
+- ✅ Docker tag: `:latest`
+- ✅ Marked as "Latest Release"
+- ✅ Full changelog in release notes
+
+### Pre-releases (alpha, beta, rc)
+
+- ✅ Docker tag: `:v1.0.0-alpha.1` (version-specific only)
+- ⚠️ Marked as "Pre-release"
+- ⚠️ **Does NOT update `:latest` tag**
+- ⚠️ Warning in release notes
+
+---
 
 ## Release Workflow
 
@@ -688,18 +903,198 @@ This is the intended workflow to ensure quality and audit trail.
 
 ---
 
-## Contact
+## ⚠️ Pre-release vs Stable Differences
 
-For questions about the release process:
-- Create an issue in the repository
-- Review `.github/WORKFLOWS.md` for detailed workflow documentation
-- Contact the maintainers
+| Aspect                 | Pre-release (alpha/beta/rc) | Stable Release               |
+| ---------------------- | --------------------------- | ---------------------------- |
+| **Git Tag**            | `v1.0.0-alpha.1`            | `v1.0.0`                     |
+| **GitHub Release**     | ⚠️ Marked as "Pre-release"   | ✅ Marked as "Latest Release" |
+| **Docker `:latest`**   | ❌ Not updated               | ✅ Updated                    |
+| **Docker version tag** | ✅ Available                 | ✅ Available                  |
+| **Recommended for**    | Testing, staging            | Production                   |
 
-## Resources
+---
 
-- [Semantic Versioning](https://semver.org/)
-- [Keep a Changelog](https://keepachangelog.com/)
-- [GoReleaser Documentation](https://goreleaser.com/)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [GitHub Branch Protection](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches)
-- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
+## 🔧 Troubleshooting
+
+### Release Workflow Fails
+
+**Problem**: Release workflow fails after running
+
+**Solutions**:
+
+1. **Check workflow logs**:
+   ```bash
+   gh run list --workflow=release.yaml
+   gh run view <RUN_ID> --log
+   ```
+
+2. **Common failures**:
+
+   | Error                    | Cause                        | Solution                             |
+   | ------------------------ | ---------------------------- | ------------------------------------ |
+   | "Version already exists" | Tag already created          | Delete tag and re-run                |
+   | "Changelog not found"    | Missing version in CHANGELOG | Ensure prepare-release PR was merged |
+   | "Docker push failed"     | GHCR auth issue              | Check GITHUB_TOKEN permissions       |
+   | "GoReleaser failed"      | Build errors                 | Check build logs, fix code issues    |
+
+3. **Re-run failed workflow**:
+   ```bash
+   gh run rerun <RUN_ID>
+   ```
+
+### Prepare-Release PR Conflicts
+
+**Problem**: Prepare-release PR has merge conflicts
+
+**Cause**: CHANGELOG.md was modified on main since last release
+
+**Solution**:
+```bash
+# Update the branch via GitHub UI: "Update branch" button on PR
+# Or locally:
+git checkout feature/prepare-release-v1.0.0-alpha.1
+git pull origin main
+git push
+```
+
+### Wrong Pre-release Suffix Created
+
+**Problem**: Expected `v1.0.0-alpha.2` but got `v1.0.0-alpha.1`
+
+**Cause**: Previous tag doesn't exist or workflow couldn't find it
+
+**Solution**:
+```bash
+# Check existing tags
+git tag -l "v1.0.0-alpha.*"
+
+# If wrong tag was created, delete and re-run
+gh release delete v1.0.0-alpha.1 --yes
+git tag -d v1.0.0-alpha.1
+git push origin :refs/tags/v1.0.0-alpha.1
+gh workflow run release.yaml -f version=1.0.0 -f release_type=alpha
+```
+
+### Can't Merge Prepare-Release PR
+
+**Problem**: "Release freeze" check is failing
+
+**Cause**: Another prepare-release PR is already open
+
+**Solution**:
+```bash
+# Check for other open prepare-release PRs
+gh pr list --label "prepare-release"
+
+# Close the old PR if it's stale
+gh pr close <OLD_PR_NUMBER>
+```
+
+### Docker Image Not Available
+
+**Problem**: `docker pull ghcr.io/binsabbar/vault-sync:v1.0.0` fails
+
+**Solutions**:
+
+1. **Check if release workflow completed**:
+   ```bash
+   gh run list --workflow=release.yaml --limit 1
+   ```
+
+2. **Verify image in GHCR**:
+   ```bash
+   open "https://github.com/binsabbar?tab=packages&repo_name=vault-sync"
+   ```
+
+### Promotion Doesn't Use Same Commit
+
+**Problem**: Promoted stable release uses different commit than RC
+
+**Solution**:
+```bash
+# Use promote_from parameter
+gh workflow run release.yaml \
+  -f version=1.0.0 \
+  -f release_type=stable \
+  -f promote_from=v1.0.0-rc.1
+```
+
+---
+
+## 📚 Additional Resources
+
+- **GitHub Flow**: https://githubflow.github.io/
+- **Semantic Versioning**: https://semver.org/
+- **Changie Documentation**: https://changie.dev/
+- **GoReleaser Documentation**: https://goreleaser.com/
+- **Keep a Changelog**: https://keepachangelog.com/
+
+---
+
+## 🤔 FAQ
+
+### Q: Can I skip prepare-release and go straight to release?
+
+**A**: No. The prepare-release step is required because it updates CHANGELOG.md and creates an audit trail.
+
+### Q: What if I need to release multiple versions simultaneously?
+
+**A**: Release them sequentially - complete one full cycle (prepare → merge → release) before starting the next.
+
+### Q: How do I test the release process without publishing?
+
+**A**: Use alpha releases - they won't update `:latest` and are marked as pre-releases.
+
+### Q: Can I edit the changelog after it's generated?
+
+**A**: Yes! Edit CHANGELOG.md directly in the prepare-release PR before merging.
+
+### Q: What happens if I delete a tag and re-release?
+
+**A**: You can, but it's better to create a new patch version instead (v1.0.1) to avoid confusion.
+
+---
+
+## 📝 Changelog Entry Guidelines
+
+### Good Changelog Entries
+
+✅ **DO**:
+- Be specific and concise
+- Use user-facing language
+- Focus on impact to users
+
+**Examples**:
+```yaml
+kind: Fixed
+body: Prevent race condition in circuit breaker causing connection leaks
+
+kind: Added
+body: Support for HashiCorp Vault namespaces in sync operations
+
+kind: Security
+body: Upgrade vault client to v1.15.0 to fix CVE-2024-XXXXX
+```
+
+❌ **DON'T**:
+- Include commit hashes or technical jargon
+- List file names or function names
+- Add implementation details
+
+### When to Use Each Change Kind
+
+| Kind                   | Use When                          | Example                                      |
+| ---------------------- | --------------------------------- | -------------------------------------------- |
+| **✨ Added**            | New features visible to users     | "Add support for Vault namespaces"           |
+| **🐛 Fixed**            | Bug fixes that impact users       | "Fix panic when vault returns nil response"  |
+| **💥 Breaking Changes** | Changes requiring user action     | "Remove --legacy-mode flag"                  |
+| **🔄 Changed**          | Improvements to existing features | "Improve sync performance by 50%"            |
+| **🔒 Security**         | Security fixes                    | "Upgrade dependencies to fix CVE-2024-XXXXX" |
+| **⚡ Performance**      | Performance improvements          | "Reduce memory usage by 30%"                 |
+| **📚 Documentation**    | User-facing doc updates           | "Add comprehensive examples to README"       |
+| **⚠️ Deprecated**       | Features marked for removal       | "Deprecate --old-flag (use --new-flag)"      |
+| **🗑️ Removed**          | Features removed                  | "Remove deprecated sync v1 API"              |
+| **⚠️ Known Issues**     | Known bugs or limitations         | "Sync may timeout with 10k+ secrets"         |
+
+---
