@@ -1,15 +1,11 @@
-# .github/workflows/release-freeze-guard.yaml
 name: release-freeze-guard
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
-  # Also run when prepare-release PR is merged to clear blocks
-  push:
-    branches:
-      - main
+  workflow_call:
+    outputs:
+      frozen:
+        description: 'Whether a release freeze is active'
+        value: ${{ jobs.check-freeze.outputs.frozen }}
 
 jobs:
   check-freeze:
@@ -17,6 +13,8 @@ jobs:
     permissions:
       pull-requests: write
       contents: read
+    outputs:
+      frozen: ${{ steps.freeze-check.outputs.frozen }}
     steps:
       - name: Check for active release freeze
         id: freeze-check
@@ -26,6 +24,7 @@ jobs:
             // Only check on pull_request events
             if (context.eventName !== 'pull_request') {
               console.log('Not a PR event, skipping freeze check');
+              core.setOutput('frozen', 'false');
               return;
             }
             
@@ -33,7 +32,8 @@ jobs:
             
             // Don't check prepare-release PRs themselves
             if (currentPR.head.ref.startsWith('feature/prepare-release-')) {
-              console.log('This is a prepare-release PR, skipping check');
+              console.log('✅ This is a prepare-release PR, skipping check');
+              core.setOutput('frozen', 'false');
               return;
             }
             
@@ -71,14 +71,6 @@ jobs:
             
             console.log(`⚠️ Release freeze active for v${version}`);
             console.log(`Blocking PR: #${blockingPR.number}`);
-            
-            // Set failed status to block merge
-            core.setFailed(
-              `🚫 Release freeze for v${version} is active!\n\n` +
-              `Blocking PR: #${blockingPR.number} - ${blockingPR.title}\n` +
-              `${blockingPR.html_url}\n\n` +
-              `Please wait for the release preparation to complete.`
-            );
 
       - name: Add freeze labels
         if: steps.freeze-check.outputs.frozen == 'true'
@@ -162,8 +154,22 @@ jobs:
               });
             }
 
+      - name: Block workflow if frozen
+        if: steps.freeze-check.outputs.frozen == 'true'
+        run: |
+          VERSION="${{ steps.freeze-check.outputs.version }}"
+          PR_NUMBER="${{ steps.freeze-check.outputs.pr_number }}"
+          PR_URL="${{ steps.freeze-check.outputs.pr_url }}"
+          
+          echo "::error::🚫 Release freeze for v${VERSION} is active!"
+          echo "::error::Blocking PR: #${PR_NUMBER}"
+          echo "::error::${PR_URL}"
+          echo ""
+          echo "Please wait for the release preparation to complete."
+          exit 1
+
       - name: Remove freeze labels (if not frozen)
-        if: steps.freeze-check.outputs.frozen == 'false' && github.event_name == 'pull_request'
+        if: steps.freeze-check.outputs.frozen == 'false'
         uses: actions/github-script@v7
         continue-on-error: true
         with:
@@ -184,6 +190,6 @@ jobs:
             }
 
       - name: Success message
-        if: steps.freeze-check.outputs.frozen == 'false' && github.event_name == 'pull_request'
+        if: steps.freeze-check.outputs.frozen == 'false'
         run: |
           echo "✅ No release freeze active - PR can proceed normally"
