@@ -7,20 +7,30 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
+  # FIRST: Check for release freeze (blocks everything else)
+  check-freeze:
+    uses: ./.github/workflows/check-release-freeze.yaml
+
+  # SECOND: Run tests (only if freeze check passes)
   test:
+    needs: check-freeze
     uses: ./.github/workflows/test.yaml
 
-  lint: 
+  # THIRD: Run linting (only if freeze check passes)
+  lint:
+    needs: check-freeze
     uses: ./.github/workflows/golangci-lint.yaml
 
+  # FOURTH: Run snapshot (only if all checks pass)
   snapshot:
-    needs: [test, lint]
+    needs: [check-freeze, test, lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Go 1.24
         uses: actions/setup-go@v5
         with:
