@@ -382,8 +382,8 @@ Vault Sync follows [Semantic Versioning](https://semver.org/) and uses GitHub Fl
 - Docker images: `ghcr.io/binsabbar/vault-sync:v1.0.0` or `:latest`
 
 All releases include:
-- Cross-platform binaries (Linux, macOS, Windows - amd64/arm64)
-- Docker images (multi-arch)
+- Cross-platform binaries (Linux, macOS - amd64/arm64)
+- Docker images
 - Comprehensive changelogs
 
 See [releases page](https://github.com/binsabbar/vault-sync/releases) for all available versions.
