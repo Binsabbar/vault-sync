@@ -155,7 +155,7 @@ jobs:
           # Run changie batch with FULL pre-release suffix
           if [ -n "$PRERELEASE_SUFFIX" ]; then
             echo "🏷️ Including pre-release suffix: ${PRERELEASE_SUFFIX}"
-            changie batch ${BUMP} -p ${PRERELEASE_SUFFIX}
+            changie batch ${BUMP} -p ${PRERELEASE_SUFFIX} --keep
           else
             changie batch ${BUMP}
           fi
