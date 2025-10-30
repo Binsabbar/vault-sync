@@ -30,6 +30,12 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          
       - name: Setup changie
         uses: ./.github/actions/setup-changie
         with:
