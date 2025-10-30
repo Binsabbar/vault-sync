@@ -1,0 +1,3 @@
+kind: known_issues
+body: Limited to KV v2 secret engines
+time: 2025-10-29T16:01:34.502814+03:00

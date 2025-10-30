@@ -1,0 +1,3 @@
+kind: added
+body: Support for syncing secrets between Vault clusters
+time: 2025-10-29T16:01:13.258822+03:00
