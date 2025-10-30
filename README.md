@@ -365,6 +365,28 @@ make go-fmt
 | Resource                                                       | Description                                    |
 | -------------------------------------------------------------- | ---------------------------------------------- |
 | [Path Matching Guide](internal/service/pathmatching/README.md) | Comprehensive guide for pattern matching rules |
+| [Release Process](RELEASE.md)                                  | Complete guide for creating releases           |
+
+## Releases
+
+Vault Sync follows [Semantic Versioning](https://semver.org/) and uses GitHub Flow with automated changelog management.
+
+**For maintainers**: See [RELEASE.md](RELEASE.md) for the complete release process including:
+- Creating alpha, beta, RC, and stable releases
+- Using changie for changelog management
+- Automated workflows and troubleshooting
+
+**For users**:
+- Stable releases: `v1.0.0`, `v1.2.3` (recommended for production)
+- Pre-releases: `v1.0.0-alpha.1`, `v1.0.0-beta.1`, `v1.0.0-rc.1` (for testing)
+- Docker images: `ghcr.io/binsabbar/vault-sync:v1.0.0` or `:latest`
+
+All releases include:
+- Cross-platform binaries (Linux, macOS - amd64/arm64)
+- Docker images
+- Comprehensive changelogs
+
+See [releases page](https://github.com/binsabbar/vault-sync/releases) for all available versions.
 
 ## Roadmap
 
