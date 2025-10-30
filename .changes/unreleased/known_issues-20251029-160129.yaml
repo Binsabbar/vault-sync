@@ -1,0 +1,3 @@
+kind: known_issues
+body: Sync rule changes require manual cleanup of previously synced secrets
+time: 2025-10-29T16:01:29.609884+03:00
