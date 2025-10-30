@@ -19,6 +19,10 @@ on:
           - rc
         default: none
 
+env:
+  CHANGIE_VERSION: "1.20.0"
+  GO_VERSION: "1.24"
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -26,23 +30,18 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - name: Setup changie
+        uses: ./.github/actions/setup-changie
         with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-
-      - name: Install changie
-        run: go install github.com/miniscruff/changie@latest
+          go-version: ${{ env.GO_VERSION }}
+          changie-version: ${{ env.CHANGIE_VERSION }}
 
       - name: Calculate version with auto-increment
         id: version
         run: |
+          # Note: Similar logic exists in release.yaml but with different outputs
+          # Keep these in sync if you modify the version calculation logic
+
           BASE_VERSION="${{ github.event.inputs.version }}"
           PRERELEASE="${{ github.event.inputs.prerelease_type }}"
           
@@ -125,9 +124,14 @@ jobs:
           PRERELEASE_SUFFIX="${{ steps.version.outputs.prerelease_suffix }}"
           
           # Determine version bump type from version number
-          CURRENT_VERSION=$(changie latest 2>/dev/null || echo "0.0.0")
+          # Note: changie latest -r returns version WITHOUT 'v' prefix (e.g., "1.0.0")
+          CURRENT_VERSION=$(changie latest -r 2>/dev/null || echo "0.0.0")
+          
           # Remove any pre-release suffix from current version for comparison
           CURRENT_BASE=$(echo "$CURRENT_VERSION" | sed 's/-.*$//')
+          
+          echo "📊 Current version: ${CURRENT_VERSION} (base: ${CURRENT_BASE})"
+          echo "📊 Target version: ${BASE_VERSION}"
           
           IFS='.' read -r CURR_MAJOR CURR_MINOR CURR_PATCH <<< "$CURRENT_BASE"
           IFS='.' read -r NEW_MAJOR NEW_MINOR NEW_PATCH <<< "$BASE_VERSION"
@@ -154,7 +158,7 @@ jobs:
           changie merge
           
           # Verify the version was created correctly
-          if ! grep -q "^## ${VERSION} - " CHANGELOG.md; then
+          if ! grep -q "^## v${VERSION} - " CHANGELOG.md; then
             echo "::error::Expected version '${VERSION}' not found in CHANGELOG.md"
             echo "Found instead:"
             head -5 CHANGELOG.md

@@ -1,0 +1,64 @@
+name: 'Setup Changie'
+description: 'Sets up Go and installs changie with caching'
+
+inputs:
+  go-version:
+    description: 'Go version to use'
+    required: false
+    default: '1.24'
+  changie-version:
+    description: 'Changie version to install'
+    required: false
+    default: '1.22.1'
+
+outputs:
+  changie-version:
+    description: 'Installed changie version'
+    value: ${{ steps.versions.outputs.changie }}
+  go-version:
+    description: 'Installed Go version'
+    value: ${{ steps.versions.outputs.go }}
+  cache-hit:
+    description: 'Whether changie was restored from cache'
+    value: ${{ steps.cache-changie.outputs.cache-hit }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+
+    - name: Cache changie binary
+      id: cache-changie
+      uses: actions/cache@v4
+      with:
+        path: ~/go/bin/changie
+        key: ${{ runner.os }}-changie-${{ inputs.changie-version }}
+
+    - name: Install changie
+      if: steps.cache-changie.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "📦 Installing changie v${{ inputs.changie-version }}..."
+        go install github.com/miniscruff/changie@v${{ inputs.changie-version }}
+        echo "✅ Changie installed"
+
+    - name: Add Go bin to PATH
+      shell: bash
+      run: echo "$HOME/go/bin" >> $GITHUB_PATH
+
+    - name: Verify installation
+      shell: bash
+      run: |
+        changie --version
+        echo "✅ Changie is ready"
+
+    - name: Output versions
+      id: versions
+      shell: bash
+      run: |
+        echo "changie=${{ inputs.changie-version }}" >> $GITHUB_OUTPUT
+        echo "go=${{ inputs.go-version }}" >> $GITHUB_OUTPUT

@@ -5,18 +5,22 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Base version (e.g., 1.0.0) - suffix will be auto-incremented'
+        description: "Base version (e.g., 1.0.0) - suffix will be auto-incremented"
         required: true
         type: string
       release_type:
-        description: 'Release type'
+        description: "Release type"
         required: true
         type: choice
         options: [stable, rc, beta, alpha]
       promote_from:
-        description: 'Promote from tag (for stable releases, e.g., v1.0.0-rc.1)'
+        description: "Promote from tag (for stable releases, e.g., v1.0.0-rc.1)"
         required: false
         type: string
+
+env:
+  CHANGIE_VERSION: "1.20.0" # Pin changie version
+  GO_VERSION: "1.24"
 
 jobs:
   release:
@@ -31,24 +35,25 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup changie
+        uses: ./.github/actions/setup-changie
         with:
-          go-version: "1.24"
-
-      - name: Install changie
-        run: go install github.com/miniscruff/changie@latest
+          go-version: ${{ env.GO_VERSION }}
+          changie-version: ${{ env.CHANGIE_VERSION }}
 
       - name: Calculate version with auto-increment suffix
         id: version
         run: |
+          # Note: Similar logic exists in prepare-release.yaml but with different outputs
+          # Keep these in sync if you modify the version calculation logic
+
           BASE_VERSION="${{ github.event.inputs.version }}"
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
           PROMOTE_FROM="${{ github.event.inputs.promote_from }}"
-          
+
           # Remove 'v' prefix if present
           BASE_VERSION="${BASE_VERSION#v}"
-          
+
           if [ "$RELEASE_TYPE" == "stable" ]; then
             # Stable release - no suffix
             VERSION="v${BASE_VERSION}"
@@ -73,13 +78,13 @@ jobs:
             
             VERSION="v${BASE_VERSION}-${RELEASE_TYPE}.${SUFFIX}"
           fi
-          
+
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
           echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
           echo "is_prerelease=$([[ $RELEASE_TYPE != 'stable' ]] && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "promote_from=${PROMOTE_FROM}" >> $GITHUB_OUTPUT
-          
+
           echo "✅ Calculated version: ${VERSION}"
 
       - name: Check if tag exists
@@ -97,7 +102,7 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
           PROMOTE_FROM="${{ steps.version.outputs.promote_from }}"
-          
+
           if [ "$RELEASE_TYPE" == "stable" ] && [ -n "$PROMOTE_FROM" ]; then
             # Stable release: tag the same commit as the RC
             echo "🔄 Promoting ${PROMOTE_FROM} to ${VERSION}"
@@ -115,7 +120,7 @@ jobs:
             echo "📍 Will tag current HEAD: ${COMMIT_SHA}"
             echo "promote=false" >> $GITHUB_OUTPUT
           fi
-          
+
           echo "sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Get release notes from changie
@@ -124,12 +129,12 @@ jobs:
           VERSION=${{ steps.version.outputs.version_no_v }}
           BASE_VERSION=${{ steps.version.outputs.base_version }}
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
-          
+
           # Check if this exact version exists in CHANGELOG
-          if grep -q "^## ${VERSION}" CHANGELOG.md; then
+          if grep -q "^## v${VERSION}" CHANGELOG.md; then
             echo "📝 Extracting existing changelog for ${VERSION}"
             awk "/^## ${VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/release_notes.md
-          elif grep -q "^## ${BASE_VERSION}" CHANGELOG.md; then
+          elif grep -q "^## v${BASE_VERSION}" CHANGELOG.md; then
             # Base version exists, extract it and add pre-release info
             echo "📝 Extracting changelog for base version ${BASE_VERSION}"
             awk "/^## ${BASE_VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/base_notes.md
@@ -171,7 +176,7 @@ jobs:
             echo "  gh workflow run prepare-release.yaml -f version=${BASE_VERSION}"
             exit 1
           fi
-          
+
           # Add promotion notice if needed
           if [ "${{ steps.commit.outputs.promote }}" == "true" ]; then
             cat > /tmp/notes_with_promotion.md <<EOF
@@ -187,9 +192,9 @@ jobs:
           EOF
             mv /tmp/notes_with_promotion.md /tmp/release_notes.md
           fi
-          
+
           echo "file=/tmp/release_notes.md" >> $GITHUB_OUTPUT
-          
+
           echo "📄 Release notes preview:"
           head -30 /tmp/release_notes.md
 
@@ -198,19 +203,19 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           COMMIT_SHA=${{ steps.commit.outputs.sha }}
           IS_PROMOTE=${{ steps.commit.outputs.promote }}
-          
+
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
-          
+
           if [ "$IS_PROMOTE" == "true" ]; then
             echo "🏷️ Promoting ${{ steps.version.outputs.promote_from }} → ${VERSION}"
           else
             echo "🏷️ Creating tag ${VERSION} for commit ${COMMIT_SHA}"
           fi
-          
+
           git tag -a "${VERSION}" "${COMMIT_SHA}" -m "Release ${VERSION}"
           git push origin "${VERSION}"
-          
+
           echo "✅ Tag ${VERSION} created successfully"
 
       - name: Set up Docker Buildx
@@ -241,18 +246,18 @@ jobs:
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
           COMMIT_SHA=${{ steps.commit.outputs.sha }}
           PROMOTE_FROM="${{ steps.version.outputs.promote_from }}"
-          
+
           echo "✅ Release ${VERSION} created successfully!"
           echo "📦 Type: ${RELEASE_TYPE}"
           echo "📍 Commit: ${COMMIT_SHA}"
-          
+
           if [ -n "$PROMOTE_FROM" ]; then
             echo "🔄 Promoted from: ${PROMOTE_FROM}"
           fi
-          
+
           echo "🔗 https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
           echo "🐳 Docker: ghcr.io/${{ github.repository_owner }}/vault-sync:${VERSION}"
-          
+
           # Show next steps
           case "$RELEASE_TYPE" in
             alpha)
