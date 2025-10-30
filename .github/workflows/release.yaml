@@ -131,10 +131,10 @@ jobs:
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
 
           # Check if this exact version exists in CHANGELOG
-          if grep -q "^## ${VERSION}" CHANGELOG.md; then
+          if grep -q "^## v${VERSION}" CHANGELOG.md; then
             echo "📝 Extracting existing changelog for ${VERSION}"
             awk "/^## ${VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/release_notes.md
-          elif grep -q "^## ${BASE_VERSION}" CHANGELOG.md; then
+          elif grep -q "^## v${BASE_VERSION}" CHANGELOG.md; then
             # Base version exists, extract it and add pre-release info
             echo "📝 Extracting changelog for base version ${BASE_VERSION}"
             awk "/^## ${BASE_VERSION}/ {flag=1; next} /^## / {flag=0} flag" CHANGELOG.md > /tmp/base_notes.md
