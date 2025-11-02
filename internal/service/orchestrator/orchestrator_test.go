@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	// "errors"
@@ -262,4 +263,134 @@ func (suite *OrchestratorTestSuite) TestStartSync_Discovery() {
 		suite.Len(result.JobResults, 2)
 		suite.Greater(result.FailedSyncs, 0, "Some jobs should fail")
 	})
+}
+
+func (suite *OrchestratorTestSuite) TestStartSync_DeletesSecretsNotInMaster() {
+	suite.Run("deletes secrets from replicas when deleted from master", func() {
+		// Setup: Create secrets in master and sync them
+		suite.writeSecretsToMaster(teamAMount, "app1/db", "app2/api")
+		cfg := &config.Config{SyncRule: config.SyncRule{KvMounts: mounts}, Concurrency: 1}
+		orchestrator := suite.createOrchestrator(cfg)
+
+		// First sync - sync both secrets to replicas
+		result1, err := orchestrator.StartSync(suite.ctx)
+		suite.NoError(err)
+		suite.Equal(2, result1.SuccessfulSyncs)
+
+		// Verify initial state
+		suite.assertSecretExistsInReplicas(teamAMount, "app1/db")
+		suite.assertDBRecordCount(4, "Should have 2 secrets × 2 replicas")
+
+		// Delete one secret from master
+		suite.deleteSecretFromMaster(teamAMount, "app1/db")
+
+		// Second sync - should delete from replicas
+		result2, err := orchestrator.StartSync(suite.ctx)
+		suite.NoError(err)
+		suite.Equal(2, result2.TotalSecrets)
+		suite.Equal(1, result2.SuccessfulSyncs, "Should delete one secret")
+		suite.Equal(1, result2.NoOpSecrets, "Other secret unchanged")
+
+		// Verify deletion
+		suite.assertSecretDeletedFromReplicas(teamAMount, "app1/db")
+		suite.assertDBRecordCount(2, "Should have 1 secret × 2 replicas after deletion")
+		suite.assertOnlySecretRemains("app2/api")
+	})
+
+	suite.Run("handles multiple deletions at once", func() {
+		suite.writeSecretsToMaster(teamAMount, "secret1", "secret2", "secret3")
+		cfg := &config.Config{SyncRule: config.SyncRule{KvMounts: mounts}, Concurrency: 1}
+		orchestrator := suite.createOrchestrator(cfg)
+
+		// First sync
+		result1, err := orchestrator.StartSync(suite.ctx)
+		suite.NoError(err)
+		suite.Equal(3, result1.SuccessfulSyncs)
+
+		// Delete 2 secrets from master
+		suite.deleteSecretFromMaster(teamAMount, "secret1", "secret2")
+
+		// Second sync
+		result2, err := orchestrator.StartSync(suite.ctx)
+		suite.NoError(err)
+		suite.Equal(3, result2.TotalSecrets)
+		suite.Equal(2, result2.SuccessfulSyncs, "Should delete 2 secrets")
+		suite.Equal(1, result2.NoOpSecrets, "1 secret unchanged")
+
+		// Verify only secret3 remains
+		suite.assertSecretExistsInReplicas(teamAMount, "secret3")
+		suite.assertSecretDeletedFromReplicas(teamAMount, "secret1", "secret2")
+	})
+
+	suite.Run("does not delete secrets that were never synced", func() {
+		// Create orphan secret only in replica
+		suite.vaultReplica1Helper.WriteSecret(suite.ctx, teamAMount, "orphan-secret", map[string]string{"k": "v"})
+
+		// Create and sync master secret
+		suite.writeSecretsToMaster(teamAMount, "master-secret")
+		cfg := &config.Config{SyncRule: config.SyncRule{KvMounts: mounts}, Concurrency: 1}
+		orchestrator := suite.createOrchestrator(cfg)
+
+		result, err := orchestrator.StartSync(suite.ctx)
+		suite.NoError(err)
+		suite.Equal(1, result.TotalSecrets, "Should only process master-secret")
+		suite.Equal(1, result.SuccessfulSyncs)
+
+		// Verify orphan remains untouched
+		suite.assertSecretExistsInReplicas(teamAMount, "orphan-secret")
+	})
+}
+
+// Helper methods
+func (suite *OrchestratorTestSuite) createOrchestrator(cfg *config.Config) *SyncOrchestrator {
+	pathMatcher := pathmatching.NewVaultPathMatcher(suite.vaultClient, &cfg.SyncRule)
+	return NewSyncOrchestrator(suite.vaultClient, suite.repo, pathMatcher, cfg.Concurrency)
+}
+
+func (suite *OrchestratorTestSuite) writeSecretsToMaster(mount string, paths ...string) {
+	for i, path := range paths {
+		suite.vaultMainHelper.WriteSecret(
+			suite.ctx, mount, path,
+			map[string]string{"key": fmt.Sprintf("v%d", i+1)},
+		)
+	}
+}
+
+func (suite *OrchestratorTestSuite) deleteSecretFromMaster(mount string, paths ...string) {
+	for _, path := range paths {
+		_, err := suite.vaultMainHelper.DeleteSecret(suite.ctx, fmt.Sprintf("%s/%s", mount, path))
+		suite.NoError(err, "Failed to delete secret %s from master", path)
+	}
+}
+
+func (suite *OrchestratorTestSuite) assertSecretExistsInReplicas(mount string, paths ...string) {
+	for _, path := range paths {
+		_, _, err := suite.vaultReplica1Helper.ReadSecretData(suite.ctx, mount, path)
+		suite.NoError(err, "Secret %s should exist in replica1", path)
+		_, _, err = suite.vaultReplica2Helper.ReadSecretData(suite.ctx, mount, path)
+		suite.NoError(err, "Secret %s should exist in replica2", path)
+	}
+}
+
+func (suite *OrchestratorTestSuite) assertSecretDeletedFromReplicas(mount string, paths ...string) {
+	for _, path := range paths {
+		_, _, err := suite.vaultReplica1Helper.ReadSecretData(suite.ctx, mount, path)
+		suite.Error(err, "Secret %s should be deleted from replica1", path)
+		_, _, err = suite.vaultReplica2Helper.ReadSecretData(suite.ctx, mount, path)
+		suite.Error(err, "Secret %s should be deleted from replica2", path)
+	}
+}
+
+func (suite *OrchestratorTestSuite) assertDBRecordCount(expected int, msgAndArgs ...interface{}) {
+	syncedSecrets, err := suite.repo.GetSyncedSecrets()
+	suite.NoError(err)
+	suite.Len(syncedSecrets, expected, msgAndArgs...)
+}
+
+func (suite *OrchestratorTestSuite) assertOnlySecretRemains(expectedPath string) {
+	syncedSecrets, err := suite.repo.GetSyncedSecrets()
+	suite.NoError(err)
+	for _, record := range syncedSecrets {
+		suite.Equal(expectedPath, record.SecretPath, "Only %s should remain in DB", expectedPath)
+	}
 }
