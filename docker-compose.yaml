@@ -1,8 +1,8 @@
 
 services:
   app:
-    image: vault-sync:latest
-    command: ["sync", "--config", "/tmp/sample-config.yaml"]
+    image: ghcr.io/binsabbar/vault-sync:latest
+    command: ["sync", "once", "--config", "/tmp/sample-config.yaml"]
     volumes:
       - ./sample-config-docker.yaml:/tmp/sample-config.yaml:ro
     depends_on:
