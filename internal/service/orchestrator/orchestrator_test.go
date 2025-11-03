@@ -325,6 +325,7 @@ func (suite *OrchestratorTestSuite) TestStartSync_DeletesSecretsNotInMaster() {
 	suite.Run("does not delete secrets that were never synced", func() {
 		// Create orphan secret only in replica
 		suite.vaultReplica1Helper.WriteSecret(suite.ctx, teamAMount, "orphan-secret", map[string]string{"k": "v"})
+		suite.vaultReplica2Helper.WriteSecret(suite.ctx, teamAMount, "orphan-secret", map[string]string{"k": "v"})
 
 		// Create and sync master secret
 		suite.writeSecretsToMaster(teamAMount, "master-secret")
