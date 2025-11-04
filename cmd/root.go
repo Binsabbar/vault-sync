@@ -65,8 +65,8 @@ func initConfig() {
 	}
 
 	// Environment variable support
-	viper.AutomaticEnv()
 	viper.SetEnvPrefix("VAULT_SYNC")
+	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 
 	if err := viper.ReadInConfig(); err != nil {
