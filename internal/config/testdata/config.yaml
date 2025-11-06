@@ -1,4 +1,4 @@
-# id is the unique identifier for sync service
+
 id: test
 
 log_level: info
@@ -6,77 +6,38 @@ log_level: info
 concurrency: 5
 
 sync_rule:
-  # interval is the period for syncing secrets, postfix the time unit (s, m, h)
-  #  minimum is 60s
-  #  maximum is 86400s (1day)
   interval: 60s
-  # kv_mounts is a list of KV mounts to replicate
   kv_mounts:
     - secret
     - secret2
-  # paths_to_replicate is a list of paths to replicate from the main cluster to the replica clusters
   paths_to_replicate:
     - secret/data/test
     - secret/data/test2
-  # paths_to_ignore is a list of paths to ignore in the main cluster
   paths_to_ignore:
     - secret/data/test3
     - secret/data/test4
 
-# Pattern 1: Sync everything except specific paths
-# sync_rule:
-#   kv_mounts: ["team-a", "team-b"]
-#   paths_to_replicate: ["*"]  # Sync everything
-#   paths_to_ignore:
-#     - "*/data/temp/*"        # Except temp files
-#     - "*/data/secrets/dev/*" # Except dev secrets
-
-# Pattern 2: Sync only specific paths
-# sync_rule:
-#   kv_mounts: ["team-a", "team-b"]
-#   paths_to_replicate:
-#     - "*/data/production/*"  # Only production secrets
-#     - "*/data/staging/*"     # Only staging secrets
-#   paths_to_ignore:
-#     - "*/data/production/temp" # Except production temp
-
-# Pattern 3: Sync everything (no patterns specified)
-# sync_rule:
-#   kv_mounts: ["team-a", "team-b"]
-#   # No patterns = sync everything in these mounts
 
 postgres:
-  # address is the address of the PostgreSQL database
   address: localhost
   port: 5432
-  # username is the username used to connect to the PostgreSQL database
   username: postgres
-  # password is the password used to connect to the PostgreSQL database
   password: postgres
-  # db_name is the name of the PostgreSQL database
   db_name: vault_sync
-  # ssl_mode is the SSL mode used to connect to the PostgreSQL database
   ssl_mode: disable
   ssl_root_cert_file: /path/to/root.crt
-  # max_connections is the maximum number of connections to the PostgreSQL database
   max_connections: 10
 
 vault:
-  # main_cluster is the main cluster from which secrets will be replicated
   main_cluster:
     name: main-cluster
-    # address is the address of the main cluster
     address: http://vault:8200
-    # tls_skip_verify is a boolean that indicates whether to skip TLS verification
     tls_skip_verify: true
-    # tls_cert_file is the path to the TLS certificate file, only if tls_skip_verify is false
     tls_cert_file: /path/to/cert.pem
-    # app_role is the role name used to authenticate with the main cluster
     app_role_id: my_app_role
-    # app_secret is the secret ID used to authenticate with the main cluster
     app_role_secret: my_app_secret
-    # app_role_mount is the mount point for the AppRole authentication method
     app_role_mount: approle
+    
   replica_clusters:
     - name: replica-2
       address: http://vault-replica-2:8200
