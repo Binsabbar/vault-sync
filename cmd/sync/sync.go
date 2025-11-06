@@ -48,7 +48,7 @@ func runOnce(cmd *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "sync-once").Logger()
 	logger.Info().Msg("Starting one-time vault-sync")
 
-	appConfig, err := config.NewConfig()
+	appConfig, err := config.Load()
 	if err != nil {
 		logger.Error().Err(err).Msg("Error creating config")
 		return
@@ -98,7 +98,7 @@ func runDryRun(cmd *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "sync-dry-run").Logger()
 	logger.Info().Msg("Starting vault-sync dry-run")
 
-	appConfig, err := config.NewConfig()
+	appConfig, err := config.Load()
 	if err != nil {
 		logger.Error().Err(err).Msg("Error creating config")
 		return

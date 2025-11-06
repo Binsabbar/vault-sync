@@ -1,0 +1,36 @@
+---
+id: ${TEST_ID}
+log_level: info
+concurrency: 5
+
+sync_rule:
+  interval: 60s
+  kv_mounts:
+    - secret
+  paths_to_replicate: []
+  paths_to_ignore: []
+
+postgres:
+  address: localhost
+  port: 5432
+  username: postgres
+  password: ${TEST_POSTGRES_PASSWORD}
+  db_name: vault_sync
+  ssl_mode: disable
+
+vault:
+  main_cluster:
+    name: main-cluster
+    address: http://vault:8200
+    tls_skip_verify: true
+    app_role_id: ${TEST_MAIN_APP_ROLE_ID}
+    app_role_secret: ${TEST_MAIN_APP_ROLE_SECRET}
+    app_role_mount: approle
+
+  replica_clusters:
+    - name: replica-1
+      address: http://vault-replica-1:8200
+      tls_skip_verify: true
+      app_role_id: ${TEST_REPLICA_0_APP_ROLE_ID}
+      app_role_secret: ${TEST_REPLICA_0_APP_ROLE_SECRET}
+      app_role_mount: approle

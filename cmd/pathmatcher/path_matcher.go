@@ -38,7 +38,7 @@ func init() {
 }
 
 func runPathMatcher(_ *cobra.Command, _ []string) {
-	cfg, err := config.NewConfig()
+	cfg, err := config.Load()
 
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to load config")

@@ -43,7 +43,7 @@ func init() {
 func run(_ *cobra.Command, _ []string) {
 	logger := log.Logger.With().Str("component", "config_print").Logger()
 
-	cfg, err := config.NewConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to load configuration")
 		return

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -144,7 +145,37 @@ func syncRuleValidation(sl validator.StructLevel) {
 	}
 }
 
-func NewConfig() (*Config, error) {
+func Load() (*Config, error) {
+	logger := log.Logger.With().Str("component", "config").Logger()
+
+	configFile := viper.ConfigFileUsed()
+	if configFile == "" {
+		return nil, errors.New("no config file found")
+	}
+
+	logger.Info().Str("config_file", configFile).Msg("Loading configuration")
+
+	configContent, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	expandedConfig := os.ExpandEnv(string(configContent))
+
+	viper.Reset()
+	viper.SetConfigType("yaml")
+	if readErr := viper.ReadConfig(strings.NewReader(expandedConfig)); readErr != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", readErr)
+	}
+
+	viper.SetEnvPrefix("VAULT_SYNC")
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+
+	return newConfig()
+}
+
+func newConfig() (*Config, error) {
 	logger := log.Logger.With().Str("component", "config").Logger()
 	var cfg Config
 	viper.SetDefault("log_level", "info")

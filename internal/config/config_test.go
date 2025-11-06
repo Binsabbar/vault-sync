@@ -1,8 +1,13 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,12 +59,12 @@ var validVaultReplicaClusterConfig = configFields{
 }
 
 func TestConfigLoadFromYAML(t *testing.T) {
+	cleanupEnv(t)
 	viper.Reset()
-	viper.SetConfigFile(filepath.Join("testdata", "config.yaml"))
+	viper.SetConfigFile(testConfigPath("config.yaml"))
 	viper.SetConfigType("yaml")
-	viper.ReadInConfig()
 
-	cfg, err := NewConfig()
+	cfg, err := Load()
 
 	require.NoError(t, err)
 
@@ -114,13 +119,17 @@ func TestConfigLoadFromYAML(t *testing.T) {
 }
 
 func TestConfigurationValidation(t *testing.T) {
+	cleanupEnv(t)
+	// for validationCheck use newConfig since no load from file is required.
+	// the test object is built dynamically in the test.
+
 	t.Run("returns config without error when config is valid", func(t *testing.T) {
 		viper.Reset()
-		viper.SetConfigFile(filepath.Join("testdata", "config.yaml"))
+		viper.SetConfigFile(testConfigPath("config.yaml"))
 		viper.SetConfigType("yaml")
 		require.NoError(t, viper.ReadInConfig())
 
-		cfg, err := NewConfig()
+		cfg, err := Load()
 		require.NoError(t, err)
 		require.NotNil(t, cfg)
 	})
@@ -129,9 +138,9 @@ func TestConfigurationValidation(t *testing.T) {
 		viper.Reset()
 		viper.SetConfigType("yaml")
 
-		_, err := NewConfig()
+		_, err := Load()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "is required")
+		require.Contains(t, err.Error(), "no config file found")
 	})
 
 	t.Run("It fails when validation fails", func(t *testing.T) {
@@ -408,7 +417,7 @@ func TestConfigurationValidation(t *testing.T) {
 					viper.Set(k, v)
 				}
 
-				_, err := NewConfig()
+				_, err := newConfig()
 
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.errContains)
@@ -433,7 +442,7 @@ func TestConfigurationValidation(t *testing.T) {
 			viper.Set(k, v)
 		}
 
-		cfg, _ := NewConfig()
+		cfg, _ := newConfig()
 
 		assert.Equal(t, "info", cfg.LogLevel, "Default value for log_level should be 'info'")
 		assert.Equal(t, "disable", cfg.Postgres.SSLMode, "Default value for postgres.ssl_mode should be 'disable'")
@@ -465,6 +474,115 @@ func TestConfigurationValidation(t *testing.T) {
 	})
 }
 
+func TestConfigEnvironmentVariableSubstitution(t *testing.T) {
+	cleanupEnv(t)
+	t.Run("substitutes environment variables using ${VAR} syntax", func(t *testing.T) {
+		// Set environment variables
+		t.Setenv("TEST_ID", "env_id_123")
+		t.Setenv("TEST_POSTGRES_PASSWORD", "secret_password")
+		t.Setenv("TEST_MAIN_APP_ROLE_ID", "main-role-id-123")
+		t.Setenv("TEST_MAIN_APP_ROLE_SECRET", "main-role-secret-456")
+		t.Setenv("TEST_REPLICA_0_APP_ROLE_ID", "replica-0-role-id-789")
+		t.Setenv("TEST_REPLICA_0_APP_ROLE_SECRET", "replica-0-role-secret-abc")
+
+		// Reset viper and load config with env var substitution
+		viper.Reset()
+		viper.SetConfigFile(testConfigPath("config-with-env-vars.yaml"))
+		viper.SetConfigType("yaml")
+		require.NoError(t, viper.ReadInConfig())
+
+		cfg, err := Load()
+
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+
+		// Verify substituted values
+		assert.Equal(t, "env_id_123", cfg.ID)
+		assert.Equal(t, "secret_password", cfg.Postgres.Password)
+		assert.Equal(t, "main-role-id-123", cfg.Vault.MainCluster.AppRoleID)
+		assert.Equal(t, "main-role-secret-456", cfg.Vault.MainCluster.AppRoleSecret)
+		assert.Equal(t, "replica-0-role-id-789", cfg.Vault.ReplicaClusters[0].AppRoleID)
+		assert.Equal(t, "replica-0-role-secret-abc", cfg.Vault.ReplicaClusters[0].AppRoleSecret)
+	})
+
+	t.Run("raises an error when environment variable is not set if required var", func(t *testing.T) {
+		viper.Reset()
+		viper.SetConfigFile(testConfigPath("config-with-env-vars.yaml"))
+		viper.SetConfigType("yaml")
+		require.NoError(t, viper.ReadInConfig())
+
+		_, err := Load()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is required")
+	})
+}
+
+func TestConfigViperAutomaticEnvOverride(t *testing.T) {
+	cleanupEnv(t)
+	t.Run("overrides config values with VAULT_SYNC_ prefixed env vars", func(t *testing.T) {
+		t.Setenv("VAULT_SYNC_ID", "overridden-id")
+		t.Setenv("VAULT_SYNC_LOG_LEVEL", "debug")
+		t.Setenv("VAULT_SYNC_CONCURRENCY", "10")
+		t.Setenv("VAULT_SYNC_POSTGRES_PASSWORD", "overridden-password")
+		t.Setenv("VAULT_SYNC_POSTGRES_USERNAME", "admin")
+		t.Setenv("VAULT_SYNC_VAULT_MAIN_CLUSTER_NAME", "production-vault")
+		t.Setenv("VAULT_SYNC_VAULT_MAIN_CLUSTER_ADDRESS", "https://vault-prod.example.com")
+
+		viper.Reset()
+		viper.SetConfigFile(testConfigPath("config.yaml"))
+		viper.SetConfigType("yaml")
+		require.NoError(t, viper.ReadInConfig())
+
+		cfg, err := Load()
+
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+
+		// Verify overridden values
+		assert.Equal(t, "overridden-id", cfg.ID)
+		assert.Equal(t, "debug", cfg.LogLevel)
+		assert.Equal(t, 10, cfg.Concurrency)
+		assert.Equal(t, "overridden-password", cfg.Postgres.Password)
+		assert.Equal(t, "admin", cfg.Postgres.Username)
+		assert.Equal(t, "production-vault", cfg.Vault.MainCluster.Name)
+		assert.Equal(t, "https://vault-prod.example.com", cfg.Vault.MainCluster.Address)
+	})
+
+	t.Run("env substitution takes precedence over viper automatic env", func(t *testing.T) {
+		// Set both styles of env vars
+		t.Setenv("TEST_POSTGRES_PASSWORD", "substituted-password")
+		t.Setenv("VAULT_SYNC_POSTGRES_PASSWORD", "viper-password")
+
+		viper.Reset()
+		viper.SetConfigFile(testConfigPath("config-precedence.yaml"))
+		viper.SetConfigType("yaml")
+		require.NoError(t, viper.ReadInConfig())
+
+		cfg, err := Load()
+
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+
+		assert.Equal(t, "viper-password", cfg.Postgres.Password)
+	})
+
+	t.Run("validates overridden values", func(t *testing.T) {
+		t.Setenv("VAULT_SYNC_LOG_LEVEL", "invalid-level")
+		t.Setenv("VAULT_SYNC_POSTGRES_PASSWORD", "test-pass")
+
+		viper.Reset()
+		viper.SetConfigFile(testConfigPath("config.yaml"))
+		viper.SetConfigType("yaml")
+		require.NoError(t, viper.ReadInConfig())
+
+		_, err := Load()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Config.LogLevel must be one of [trace debug info warn error fatal panic]")
+	})
+}
+
 func deleteFromMap(m configFields, keys ...string) configFields {
 	clonedMap := maps.Clone(m)
 	for _, argument := range keys {
@@ -477,4 +595,49 @@ func updateAndReturnMap(m configFields, key string, value interface{}) configFie
 	clonedMap := maps.Clone(m)
 	clonedMap[key] = value
 	return clonedMap
+}
+
+func getTestdataPath() string {
+	_, filename, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(filename)
+	return filepath.Join(dir, "testdata")
+}
+
+// testConfigPath returns the path to a test config file
+// Panics if the file doesn't exist (fail fast in tests)
+func testConfigPath(filename string) string {
+	path := filepath.Join(getTestdataPath(), filename)
+
+	// Check if file exists
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		panic(fmt.Sprintf("test config file does not exist: %s", path))
+	}
+
+	return path
+}
+
+// cleanupEnv removes all test-related environment variables before a test runs
+// This prevents issues with stale env vars from previous terminal sessions
+func cleanupEnv(t *testing.T) {
+	t.Helper()
+
+	prefixes := []string{
+		"VAULT_SYNC_",
+		"TEST_",
+	}
+
+	for _, env := range os.Environ() {
+		pair := strings.SplitN(env, "=", 2)
+		if len(pair) != 2 {
+			continue
+		}
+		key := pair[0]
+
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				t.Setenv(key, "")
+				break
+			}
+		}
+	}
 }
