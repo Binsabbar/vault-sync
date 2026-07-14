@@ -82,6 +82,12 @@ flowchart TD
 - HashiCorp Vault 1.15+
 - Docker (for local development)
 
+### Homebrew
+
+```bash
+brew install binsabbar/tap/vault-sync
+```
+
 ### Local Development Setup
 
 ```bash
